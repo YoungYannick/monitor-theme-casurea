@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d0c0a" media="(prefers-color-scheme: dark)" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>Monitor</title>
+    <script>
+      ;(function () {
+        var name = null
+        try {
+          name = localStorage.getItem("casurea:site_name")
+        } catch (e) {}
+        if (name) {
+          document.title = name
+          window.__titleProbeSource = "inline"
+        }
+      })()
+    </script>
+    <script src="/title-probe.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

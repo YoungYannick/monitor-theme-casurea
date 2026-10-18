@@ -1,0 +1,504 @@
+/* Scan this app's own source and nothing else. Tailwind's automatic detection
+   walks the whole repository, turning a word in a Rust file or a document into a
+   utility class in the shipped stylesheet: `.filter` and `.transform` were
+   here because api.rs calls `.filter(...)`. Worse than the wasted bytes, it
+   made the build depend on files that have nothing to do with it -- adding an
+   unrelated workflow changed the CSS, and with it the content hash of every
+   asset. */
+@import "tailwindcss" source(none);
+@source "../index.html";
+@source "../src";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+  /* 页面底色：参考站是 oklch(0.985) 那一档浅灰，卡片才「浮」得出来原来两面都是纯白，
+     卡片只能靠描边+阴影区分，整页看着发闷 */
+  --background: oklch(0.985 0 0);
+  --foreground: oklch(0.18 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0 0);
+  --primary: oklch(0.18 0 0);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.96 0 0);
+  --secondary-foreground: oklch(0.18 0 0);
+  --muted: oklch(0.967 0.001 286.375);
+  --muted-foreground: oklch(0.52 0 0);
+  --accent: oklch(0.955 0 0);
+  --accent-foreground: oklch(0.18 0 0);
+  --destructive: oklch(0.3 0 0);
+  /* 描边：参考站是这一档冷灰（带一点点蓝），比纯中性灰更像「卡片的一道线」 */
+  --border: oklch(0.92 0.004 286.32);
+  --input: oklch(0.92 0.004 286.32);
+  --ring: oklch(0.62 0 0);
+  /* 九色调色板：曲线要用几组同时可分辨的线，单色阶在三组以上就只剩深浅，
+     于是给延迟曲线一份真正的色相环（1-9 依次是蓝 / 橙 / 青 / 紫 / 红 / 绿 /
+     蓝青 / 黄 / 品红）亮色下压亮度保证白底可读，深色下抬亮度，色相不变，
+     所以同一台机器在两种主题下是同一种颜色 */
+  --chart-1: oklch(0.58 0.17 250);
+  --chart-2: oklch(0.66 0.16 45);
+  --chart-3: oklch(0.6 0.13 190);
+  --chart-4: oklch(0.55 0.18 295);
+  --chart-5: oklch(0.58 0.19 20);
+  --chart-6: oklch(0.58 0.15 150);
+  --chart-7: oklch(0.6 0.12 220);
+  --chart-8: oklch(0.66 0.14 70);
+  --chart-9: oklch(0.58 0.18 335);
+  /* 进度条按"越满越危险"上色，所以这里有真正的绿与琥珀：单色阶表达不了严重度 */
+  --ok: oklch(0.6 0.15 155);
+  --warn: oklch(0.62 0.15 70);
+  /* 节点地球那三块颜色（见 index.css 末尾的 .globe-*）：海面与陆地的淡染、圆盘边缘
+     的暗影 数值取自上游的亮色一套 —— 它是暖纸底，本站是近白底，所以
+     透明度各抬了一点，否则淡到看不见
+     ★**陆地必须比海面明显暗**：0.16 / 0.18 这两档实测**亮度几乎相同**（228.5 对 228.8），
+     只靠冷暖分开 —— 于是哪一块看起来像「灰块」全看它周围有什么（挨着海岸线的那片海
+     会被深色描边衬成灰、大片陆地内部反倒显得白），站长看到的就是「灰白互换」
+     现在陆地压到 0.30、海面提到 0.12：亮度差 32（205 对 237），远近都不会再认错 */
+  --globe-ocean: rgba(72, 118, 136, 0.12);
+  --globe-land: rgba(118, 86, 40, 0.3);
+  --globe-rim: rgba(42, 33, 20, 0.2);
+  --globe-pin-online: #26794f;
+  --globe-pin-offline: #b94e4f;
+  --globe-pin-detail: #fff0ec;
+  /* The status dot. Each clears 3:1 against the card (3.7 and 5.5), and 1.5:1
+     against the other, the separation red-green colour blindness still
+     perceives. */
+}
+
+.dark {
+  /* ── 暗色的文字与底色：对着上游实测过的那一套调过 ─────────────────────────────
+     站长 2026-10-06 反馈「全暗模式下字的颜色有些刺眼」 把原站 :root 里那几档取出来算成
+     OKLCH，问题就很清楚 —— 它不是"亮一点/暗一点"，而是**对比度差了一档，而且它是暖的**：
+
+       原站  void #15130f = oklch(0.188 0.0085 84.6)   ← 暖的近黑（比本站更亮一点）
+             ink  #ddd6c8 = oklch(0.878 0.020 84.6)   ← 暖的米白，不是纯白
+             ink-dim       = oklch(0.752 0.027 87)    ← 次级文字比本站的还亮
+             正文/底 = 12.83:1，主次两级亮度差 0.125
+       本站（改前）正文 oklch(0.98 0 0) / 底 0.145 → **18.6:1**，主次亮度差 0.28
+
+     纯白 0.98 配近黑底是"能看清"但"盯着累"：对比度 18.6:1 远超需要的量，且中性白在暖色
+     的机器读数里显得生硬 改法是两条：**把正文压到原站那一档（≈12.5:1）**、**整体偏暖一档
+     （H≈85°、C≈0.012~0.018）**，同时把次级文字提亮，让主次两级收拢到原站那种 0.12 左右
+     底色跟着暖一点点、亮一点点（0.145 → 0.155），免得"暖字配冷底"看着脏
+
+     改完的实测（卡片底 vs 文字）：正文 **12.72:1**、弱化文字 **8.21:1**、主次亮度差 0.130
+     （原站 12.83:1 / 8.41:1 / 0.125，基本重合）—— 仍远高于 WCAG AA 的 4.5:1，只是不再刺眼
+     亮色一套**没动**（站长只提了全暗模式；亮色那套是 0.18/0.985） */
+  --background: oklch(0.155 0.004 85);
+  --foreground: oklch(0.885 0.012 85);
+  /* 卡片与"抬升面"各比改前抬 0.01：底色 0.145→0.155 之后，原来那两档间距会被压掉 9%
+     （0.055→0.050），卡片边界看着就"塌"了一点 补回去仍是改前的 0.055 / 0.07 */
+  --card: oklch(0.21 0.004 85);
+  --card-foreground: oklch(0.885 0.012 85);
+  --popover: oklch(0.21 0.004 85);
+  --popover-foreground: oklch(0.885 0.012 85);
+  --primary: oklch(0.885 0.012 85);
+  --primary-foreground: oklch(0.21 0.004 85);
+  --secondary: oklch(0.28 0.005 85);
+  --secondary-foreground: oklch(0.885 0.012 85);
+  --muted: oklch(0.28 0.005 85);
+  --muted-foreground: oklch(0.755 0.018 85);
+  --accent: oklch(0.28 0.005 85);
+  --accent-foreground: oklch(0.885 0.012 85);
+  --destructive: oklch(0.885 0.012 85);
+  /* 描边也跟着换成那支暖墨：纯白 12% 在暖色文字旁边会显出一道冷边 */
+  --border: oklch(0.885 0.012 85 / 13%);
+  --input: oklch(0.885 0.012 85 / 16%);
+  --ring: oklch(0.6 0.008 85);
+  /* 与亮色同一份色相，只抬亮度：深色底上压暗的线会糊在一起 */
+  --chart-1: oklch(0.72 0.15 250);
+  --chart-2: oklch(0.78 0.14 55);
+  --chart-3: oklch(0.74 0.12 190);
+  --chart-4: oklch(0.7 0.16 295);
+  --chart-5: oklch(0.7 0.17 20);
+  --chart-6: oklch(0.74 0.14 150);
+  --chart-7: oklch(0.74 0.11 220);
+  --chart-8: oklch(0.8 0.13 75);
+  --chart-9: oklch(0.72 0.16 335);
+  --ok: oklch(0.74 0.14 155);
+  --warn: oklch(0.8 0.13 75);
+  /* 深色这一套的底色与上游逐值相同（它的暗底就是 oklch(0.145) 那一档，跟本站几乎同色）
+     ★透明度同亮色那套的理由调过：0.14 / 0.15 的亮度差只有 2.8（33.9 对 31.1），暗底上
+     更是分不出陆海；现在陆地 0.26、海面 0.12，亮度差 23.5（51.1 对 27.6）
+     暗色里**陆地比海面亮**（亮色里相反）—— 暗底上的「实心」块本来就该更亮，与亮色同一套直觉 */
+  --globe-ocean: rgba(86, 138, 160, 0.12);
+  --globe-land: rgba(186, 154, 102, 0.26);
+  --globe-rim: rgba(8, 8, 8, 0.36);
+  --globe-pin-online: #7dd49e;
+  --globe-pin-offline: #e98b84;
+  --globe-pin-detail: #fff0ec;
+  /* 7.8 and 3.7 against the card, 2.1 apart. The muted grey would sit 1.15 from
+     the green. */
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+  --color-chart-9: var(--chart-9);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  /* Reserve the scrollbar's width on every page: without it, leaving a route
+     whose content exceeds the fold widens the page. */
+  html { scrollbar-gutter: stable; }
+  body { @apply bg-background text-foreground; }
+}
+
+/* Tabular figures keep live numbers from shifting as they update. */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- 节点地球
+
+   复刻自上游的 `.home-globe` / `.atlas` / `.atlas-side` 三块（值都对着抄），
+   换成本站的设计 token 规则**故意不放进 `@layer`**：SVG 内部那些类（.globe-land 等）
+   上游是直接写的，不套层才能稳稳盖住 Tailwind 的工具类
+
+   两列的比例 1.35fr / 0.65fr 照上游；地图在扣除底部控件的区域居中，基准高度增高至 400px
+   窄到 900px 以下改成上下两段 放大或标签密集时增加画布高度，避免圆盘与文字被裁掉 */
+.globe-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--card);
+  color: var(--card-foreground);
+}
+@media (min-width: 900px) {
+  .globe-panel { grid-template-columns: 1.35fr 0.65fr; }
+}
+
+.globe-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding-bottom: 52px;
+}
+.globe-atlas {
+  position: relative;
+  flex: none;
+  height: calc(320px * var(--globe-height-ratio, 1));
+  overflow: hidden;
+  cursor: grab;
+  /* 只让出竖向：手机上在地球上竖着划是滚页面（见组件注释），横着划才是转地球 */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+@media (min-width: 900px) {
+  .globe-atlas { height: calc(var(--globe-fit-height, 320px) * var(--globe-height-ratio, 1)); }
+}
+.globe-atlas[data-drag="true"] { cursor: grabbing; }
+/* 手机高度贴合投影、成员标签与底注，去掉固定高盒产生的上下空白；控件仍独立占位 */
+@media (max-width: 720px) {
+  .globe-atlas { height: var(--globe-mobile-height, 180px); }
+}
+.globe-toolbar {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 52px;
+  padding: 10px 12px;
+}
+.globe-map-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+.globe-mode-button, .globe-spin-button { font-size: 12px; padding-inline: 8px; white-space: nowrap; }
+.globe-mode-button[aria-pressed="true"] { background: var(--accent); color: var(--accent-foreground); }
+.globe-controls {
+  display: flex;
+  flex: 0 1 292px;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--muted-foreground);
+}
+.globe-controls input {
+  width: 128px;
+  min-width: 48px;
+  min-height: 32px;
+  flex: 0 1 128px;
+  accent-color: var(--foreground);
+  cursor: ew-resize;
+}
+.globe-controls input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 4px; }
+.globe-controls output { min-width: 40px; font-size: 12px; text-align: right; }
+.globe-zoom-reset { padding-inline: 8px; font-size: 12px; }
+@media (max-width: 1199px) {
+  .globe-main { padding-bottom: 60px; }
+  .globe-toolbar { height: 60px; gap: 8px; }
+  .globe-mode-label, .globe-spin-label { display: none; }
+  .globe-mode-button, .globe-spin-button, .globe-zoom-button, .globe-zoom-reset { width: 32px; min-width: 32px; height: 40px; flex: none; padding-inline: 4px; }
+  .globe-controls { gap: 4px; }
+  .globe-controls output { min-width: 30px; font-size: 11px; }
+  .globe-zoom-reset, .globe-controls input { min-height: 40px; }
+}
+/* 极窄屏保留滑条、比例与重置；加减按钮让出横向空间，避免挤到左侧视图按钮 */
+@media (max-width: 359px) {
+  .globe-zoom-button { display: none; }
+}
+.globe-atlas svg { display: block; width: 100%; height: 100%; color: var(--foreground); }
+/* 地球上的东西一律不吃指针事件，只有那几枚透明的命中圆吃 —— 于是"点地球"与
+   "点某台机器"是两件互不干扰的事（上游同此） */
+.globe-atlas svg text,
+.globe-atlas svg path,
+.globe-atlas svg line,
+.globe-atlas svg circle { pointer-events: none; }
+.globe-atlas svg .hit { pointer-events: auto; cursor: pointer; }
+.globe-atlas svg .hit:focus-visible { outline: none; stroke: var(--foreground); stroke-width: 1.2; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
+
+.globe-ocean { fill: var(--globe-ocean); }
+.globe-land { fill: var(--globe-land); stroke: none; stroke-linejoin: round; stroke-linecap: round; }
+.globe-coast { fill: none; stroke: var(--foreground); stroke-width: 0.55; stroke-opacity: 0.36; }
+.globe-disk { fill: url(#globe-shade); stroke: var(--foreground); stroke-width: 1.05; stroke-opacity: 0.42; }
+.globe-map-frame { fill: none; stroke: var(--foreground); stroke-width: 1.05; stroke-opacity: 0.42; }
+.globe-wire { fill: none; stroke: var(--foreground); stroke-opacity: 0.1; }
+.globe-sweep { fill: none; stroke: var(--foreground); }
+.globe-base { stroke: var(--foreground); stroke-opacity: 0.4; stroke-width: 1; }
+.globe-stem { fill: none; stroke: var(--foreground); stroke-width: 0.75; }
+/* 同一套柔光信标用于 2D/3D；部分离线用绿芯红圈，离线再加短横，核心始终常亮 */
+.globe-beacon { --beacon-color: var(--globe-pin-offline); }
+.globe-beacon[data-marker-state="online"] { --beacon-color: var(--globe-pin-online); }
+.globe-beacon-shape { transform: scale(1); transition: transform 160ms ease-out; }
+.globe-beacon[data-marker-active="true"] .globe-beacon-shape { transform: scale(1.25); }
+.globe-pin { fill: var(--globe-pin-online); stroke: none; }
+.globe-pin[data-marker-state="offline"] { fill: var(--globe-pin-offline); }
+.globe-pin-ring { fill: var(--beacon-color); fill-opacity: 0.12; stroke: var(--beacon-color); stroke-width: 0.64; stroke-opacity: 0.5; }
+.globe-pin-halo { opacity: 0.6; }
+.globe-pin-detail { fill: none; stroke: var(--globe-pin-detail); stroke-width: 0.864; stroke-linecap: round; opacity: 0.88; }
+.globe-pin-highlight { fill: var(--globe-pin-detail); opacity: 0.24; }
+.globe-panel[data-marker-pulse="true"] .globe-beacon[data-marker-state="online"] .globe-pin-halo { animation: globe-beacon-breathe 3.6s ease-in-out infinite; }
+@keyframes globe-beacon-breathe { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.75; } }
+@media (prefers-reduced-motion: reduce) {
+  .globe-beacon-shape { transition: none; }
+  .globe-panel[data-marker-pulse="true"] .globe-beacon[data-marker-state="online"] .globe-pin-halo { animation: none; opacity: 0.6; }
+}
+.globe-node-tooltip {
+  z-index: 60;
+  width: max-content;
+  max-width: min(380px, calc(100vw - 24px));
+  max-height: min(360px, 50dvh, var(--radix-tooltip-content-available-height, 50dvh));
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  font-size: 12px;
+}
+.globe-node-tooltip-heading { font-weight: 600; margin-bottom: 6px; }
+.globe-node-tooltip ul, .globe-node-options { list-style: none; margin: 0; padding: 0; }
+.globe-node-tooltip li { display: flex; align-items: start; gap: 16px; padding-block: 4px; }
+.globe-node-name { min-width: 0; flex: 1; overflow-wrap: anywhere; text-align: left; }
+.globe-node-status { flex: none; white-space: nowrap; font-size: 12px; color: var(--globe-pin-offline); }
+[data-online="1"] > .globe-node-status { color: var(--globe-pin-online); }
+.globe-node-overlay { position: fixed; inset: 0; z-index: 79; background: rgb(0 0 0 / 42%); }
+.globe-node-dialog {
+  position: fixed;
+  z-index: 80;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--card);
+  color: var(--card-foreground);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 24%);
+}
+.globe-node-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.globe-node-heading h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.globe-node-heading p { margin: 6px 0 0; font-size: 12px; color: var(--muted-foreground); }
+.globe-node-options { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.globe-node-options li + li { border-top: 1px solid var(--border); }
+.globe-node-options button { display: flex; align-items: center; gap: 16px; width: 100%; min-height: 44px; padding: 12px 8px; border-radius: var(--radius-md); font-size: 14px; cursor: pointer; }
+.globe-node-options button:hover, .globe-node-options button:focus-visible { background: var(--accent); }
+.globe-node-options button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.globe-selected-ring { fill: none; stroke: var(--foreground); stroke-width: 1.2; stroke-dasharray: 2 2; }
+.globe-selected-core { fill: var(--foreground); stroke: var(--card); stroke-width: 1.4; }
+/* 标签底下垫一道卡片底色的描边（paint-order: stroke）：引线从文字后面穿过去时
+   文字仍然读得出来字体大小与字距照上游 */
+.globe-label {
+  fill: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, "IBM Plex Mono", monospace;
+  font-size: 9.35px;
+  stroke: var(--card);
+  stroke-width: 3;
+  paint-order: stroke;
+  stroke-linejoin: round;
+}
+.globe-caption {
+  fill: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, "IBM Plex Mono", monospace;
+  font-size: 8.8px;
+  letter-spacing: 1.4px;
+  opacity: 0.55;
+}
+
+.globe-side {
+  min-width: 0;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.globe-regions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 8px 18px;
+}
+@media (min-width: 900px) {
+  .globe-side { border-top: 0; border-left: 1px solid var(--border); }
+}
+.globe-side-title { grid-column: 1 / -1; color: var(--muted-foreground); }
+.globe-reg {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.globe-reg:hover { color: var(--foreground); }
+/* 「全部」独占一整行：它是一条汇总（本分组一共几台），跟具体地区并排会读成"第一个地区"；
+   而两列的地区列表本来就要从它下面开始排 */
+/* ★ 地区行撑到 32（≈7mm）**只留给窄屏**：面板在那里是上下两段、手指操作，20px（4mm）
+   点不准（WCAG 2.2 的硬线是 24） 桌面用鼠标 —— 站长 2026-10-07 看过桌面之后说
+   「电脑端的地区显示改回原来那样」，于是这里按 900px 那道坎分开：桌面维持原来的行高
+   窄屏才撑高 行与行之间留着 .globe-side 的 8px gap，
+   命中区不会叠到邻居身上（撑高后命中 40，正好等于行高 32 + 行距 8） */
+@media (max-width: 899px) {
+  .globe-reg { min-height: 32px; }
+}
+.globe-reg-all { grid-column: 1 / -1; }
+.globe-reg span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.globe-reg b { color: var(--foreground); font-weight: 500; font-variant-numeric: tabular-nums; }
+/* 地区行上的「有机器离线」小点：这台地区里有离线时挂在台数后面（全在线不出现），
+   悬停的 title 里写着「N 台 · M 台离线」颜色跟针同一族的琥珀色 */
+.globe-reg-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 4px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--warn);
+}
+/* 选中的那一行加粗提亮（上游是加大字号；这里跟着本站的字重语言走，不为一行改字号，
+   否则整块的行高会跟着跳） */
+.globe-reg[aria-pressed="true"] { color: var(--foreground); font-weight: 600; }
+.globe-reg-flag {
+  display: inline-block;
+  height: 12px;
+  width: 16px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  border-radius: 2px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px var(--border);
+}
+/* 顶栏那枚开关：关掉时压暗，一眼看得出地球是关着的 */
+.globe-toggle[aria-pressed="false"] { color: var(--muted-foreground); opacity: 0.6; }
+
+/* 页脚署名（右下角那行）：比正文的弱化色再淡一档，只作署名，不跟页面里的读数抢注意力；
+   「jikasei」那截是本主题的源码仓库链接（地址见 App.tsx 的 REPO_URL），悬停才出下划线 */
+/* 顶栏那条图标带（.header-tools）：装不下时横向滑动，与分组标签同一套做法
+   滑动条藏起来 —— 它长在 sticky 顶栏里、又只在窄窗口才出现，露出来就是一条横杠；
+   「还能滑」的提示由露一半的那枚图标给（与分组标签行一致） */
+.header-tools { scrollbar-width: none; }
+.header-tools::-webkit-scrollbar { display: none; }
+
+.theme-credit {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.6;
+  opacity: 0.62;
+}
+.theme-credit a { color: inherit; text-decoration: none; }
+.theme-credit a:hover { text-decoration: underline; }
+
+/* 顶栏那个搜索框（src/components/SearchBox.tsx）：
+   ① `type="search"` 在 WebKit 里自带一枚小叉，关掉它 —— 框里已经有一枚自己的清空按钮，
+      两个长得差不多、做同一件事的按钮并排只会让人犹豫点哪个；
+   ② **清空那枚只在框长开着（有焦点）时出现**：收起时那一格只有 36px，放大镜已经占满，
+      再挤一枚叉就成了「两枚图标叠在一起」展开／收起的动效由 `transition-all` 负责 */
+.search-input::-webkit-search-cancel-button,
+.search-input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+.search-field .search-clear { display: none; }
+.search-field:focus-within .search-clear { display: grid; }
+
+/* 触屏命中区：**外观一点不动，只把可点范围往外撑**
+   手指比鼠标粗 —— Apple 的通行线是 44×44，WCAG 2.2 的硬线（2.5.8）是 24×24
+   撑出来的那圈是 ::before，透明、不参与布局，所以排版、间距、视觉都不受影响；
+   命中测试时它算作所属元素（`document.elementFromPoint` 返回的是宿主元素）
+   类名跟着控件自己的高度走（size-9 = 36px 等），一眼看得出撑完是多少：
+     tap-9   36×36 → 44×44（顶栏那几枚图标、搜索方框）
+     tap-8   32 高  → 44    （站名）
+     tap-10  40 高  → 44
+     tap-y-6 24 高  → 44 高，横向不动 —— 密排的分段按钮之间别互相盖住
+   地区列表（.globe-reg）行距只有 8px，上下各撑 4px 到 28px 就不重叠了，再大就得动视觉 */
+.tap { position: relative; }
+.tap::before { content: ""; position: absolute; border-radius: inherit; }
+.tap-9::before { inset: -4px; }
+.tap-8::before { inset: -6px; }
+.tap-10::before { inset: -2px; }
+.tap-y-9::before { inset: -4px 0; }
+.tap-y-6::before { inset: -10px 0; }
+.globe-reg { position: relative; }
+.globe-reg::before { content: ""; position: absolute; inset: -4px 0; border-radius: 4px; }
