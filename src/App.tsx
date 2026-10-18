@@ -461,7 +461,8 @@ export default function App() {
               ))}
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            // 骨架列数与真实网格同一套（见下面那张网格的注释），加载完成时不会跳列
+            <div className={`grid gap-3 ${cardStyle === "detailed" || cardStyle === "detailedNoLatency" ? "grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))]" : "grid-cols-[repeat(auto-fill,minmax(min(264px,100%),1fr))]"}`}>
               {[0, 1, 2].map((i) => (
                 <Skeleton key={i} className="h-72" />
               ))}
@@ -598,7 +599,11 @@ function NodeList({ view, group, onGroup, onOpen, onWarm, latencyLines, cardStyl
       ) : cardStyle === "compact" ? (
         <CompactList nodes={list} onOpen={onOpen} onWarm={onWarm} historyDays={historyDays} remarkPlacement={remarkPlacement} />
       ) : (
-        <div data-card-style={cardStyle} className={`grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-3 ${cardStyle === "detailed" || cardStyle === "detailedNoLatency" ? "" : "xl:grid-cols-4"}`}>
+        // 列数自适应（auto-fill + minmax），不再按断点写死：容器多宽就排多少列——页面
+        // 85% 接管后宽屏自动排到 5、6 列，卡片宽度始终夹在下限与均分之间 下限按形态分：
+        // 详细两档内容密，320px（1230px 容器仍是 3 列）；其余四档 264px（仍是 4 列）
+        // `min(下限,100%)` 兜住 320px 老手机：窄屏退成单列而不是横向溢出
+        <div data-card-style={cardStyle} className={`grid items-start gap-3 ${cardStyle === "detailed" || cardStyle === "detailedNoLatency" ? "grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))]" : "grid-cols-[repeat(auto-fill,minmax(min(264px,100%),1fr))]"}`}>
           {list.map((n) => (
             <NodeCard key={n.id} node={n} onOpen={() => onOpen(n.id)} onWarm={onWarm} latencyLines={latencyLines} cardStyle={cardStyle} remarkPlacement={remarkPlacement} />
           ))}
