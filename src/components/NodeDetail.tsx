@@ -156,8 +156,6 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
   const reload = useRef<() => void>(() => {})
   // 缩放记时间戳，不记数组下标：刷新后窗口左端滑走一桶，仍看同一段时间
   const [zoom, setZoom] = useState<[number, number] | null>(null)
-  // 图在页面上的起点（视口坐标 + scrollY），高度据此占满余下屏幕
-  const [chartTop, setChartTop] = useState(0)
 
   useEffect(() => {
     // 实时档不发历史请求：资源数据走下面那个 live 采集，旧历史结果留着切回来时用
@@ -683,19 +681,9 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
         ) : pingSeries.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">这段时间没有延迟数据</p>
         ) : (
-          // 外层给显式像素高，图才能 `flex-1`、图例按需占行
-          <div
-            // `+ scrollY`：getBoundingClientRect 量的是视口坐标，而 live 节点每 2 秒重渲一次
-            ref={(el) => {
-              // 就地展开时高度写死，不再按视口撑满：它下面还压着别的行
-              if (el && !embedded) setChartTop(el.getBoundingClientRect().top + scrollY)
-            }}
-            style={
-              !embedded && chartTop
-                ? { height: `calc(100svh - ${Math.round(chartTop)}px - 1rem)` }
-                : undefined
-            }
-            className={embedded ? "flex h-72 flex-col gap-3" : "flex min-h-72 flex-col gap-3"}>
+          // 高度与 embedded 同一套（h-72 固定）：不随视口测量撑满，上方内容折行时高度稳定，
+          // 与资源页签的行为一致
+          <div className="flex h-72 flex-col gap-3">
             {/* `min-h-0` 让 `flex-1` 是真数字而不是内容自身高度 */}
             <div className="min-h-0 w-full flex-1 text-muted-foreground">
               {shownProbes.length === 0 ? (
