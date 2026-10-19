@@ -43,6 +43,13 @@ export type ThemeConfig = {
   themeMode: ThemeMode
   /** 每行 CODE=人民币汇率，补充或覆盖自动报价；空串完全使用自动报价 */
   exchangeRates: string
+  /**
+   * 账单页开不开：这是**站长给的闸门**，关掉时顶栏那枚「账单」入口整个不挂（不是藏）
+   * 默认开——账单只是把节点里本来就有的价格与到期日摊成一张表，不发额外请求
+   */
+  billingOn: boolean
+  /** 账单页给谁看：所有人，或仅管理员（站长登录状态，见 /api/me 的 authed） */
+  billingAccess: "everyone" | "admin"
 }
 
 /** 四档明暗：`system` 随系统、`auto` 按北京时间自动、`light`/`dark` 固定 */
@@ -128,6 +135,10 @@ export const DEFAULTS: ThemeConfig = {
   // 明暗默认「随系统」
   themeMode: "system",
   exchangeRates: "",
+  // 账单页默认开：顶栏在搜索框右侧多一枚「账单」入口，点了看全站机器的价格与到期
+  billingOn: true,
+  // 默认所有人可看；要只给站长自己看就设 admin
+  billingAccess: "everyone",
 }
 
 /** 卡片形态的六档，**按界面上要显示的顺序**（顶栏那枚菜单、后台那格下拉都照它排） */
@@ -228,6 +239,10 @@ export function normalizeConfig(saved: unknown): ThemeConfig {
     themeMode: THEME_MODES.includes(s.themeMode as ThemeMode) ? (s.themeMode as ThemeMode) : DEFAULTS.themeMode,
     // 不在这里截断行：过长或无效输入由汇率解析器整项拒绝，避免截出错误金额
     exchangeRates: typeof s.exchangeRates === "string" ? s.exchangeRates : DEFAULTS.exchangeRates,
+    // 账单开关：只认真布尔；老站点配置没有这个键（→ 默认显示）
+    billingOn: typeof s.billingOn === "boolean" ? s.billingOn : DEFAULTS.billingOn,
+    // 账单权限：只认 everyone / admin 两个值，其余（旧版本、手改）回落默认
+    billingAccess: s.billingAccess === "admin" ? "admin" : "everyone",
   }
 }
 

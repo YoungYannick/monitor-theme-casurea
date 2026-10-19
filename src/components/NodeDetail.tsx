@@ -90,9 +90,9 @@ function onlineStatus(node: Node): { online: boolean; text: string } | null {
 
 /** 规格那格的「续费」：金额 / 周期 · 到期日；没写价格（免费）返回 null */
 function renewalFor(node: Node): string | null {
-  if (node.price <= 0) return null
+  const priced = Number.isFinite(node.price) && node.price > 0
   const cycle = CYCLES[node.billing_cycle] ?? (node.billing_cycle || null)
-  const pay = `${money(node.price, node.currency)}${cycle ? ` / ${cycle}` : ""}`
+  const pay = priced ? `${money(node.price, node.currency)}${cycle ? ` / ${cycle}` : ""}` : "免费"
   const until = node.expires_at ? `${node.expires_at.slice(0, 10)} 到期` : null
   return until ? `${pay} · ${until}` : pay
 }

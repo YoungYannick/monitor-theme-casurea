@@ -1,6 +1,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
-import { Globe as GlobeIcon, Moon, Sun, Wrench } from "lucide-react"
+import { Globe as GlobeIcon, Moon, Sun, Wallet, Wrench } from "lucide-react"
 
+import { Billing } from "@/components/Billing"
 import { CardStyleMenu } from "@/components/CardStyleMenu"
 import { NodeCard } from "@/components/NodeCard"
 import { CompactList } from "@/components/CompactList"
@@ -105,24 +106,32 @@ function DetailSkeleton({ hasRemarks = false }: { hasRemarks?: boolean }) {
   )
 }
 
-// `/node/{id}` 是真页面：刷新存活、可被链接分享 hub 对未知路径都答 index.html，
+// `/node/{id}` 和 `/billing` 是真页面：刷新存活、可被链接分享 hub 对未知路径都答 index.html，
 // 不需要服务端路由
-function useNodeRoute() {
+function useAppRoute() {
   const read = () => {
+    if (location.pathname === "/billing") return { node: null as number | null, billing: true }
     const match = location.pathname.match(/^\/node\/(\d+)/)
-    return match ? Number(match[1]) : null
+    return { node: match ? (Number(match[1]) as number | null) : null, billing: false }
   }
-  const [id, setId] = useState(read)
+  const [route, setRoute] = useState(read)
   useEffect(() => {
-    const sync = () => setId(read())
+    const sync = () => setRoute(read())
     addEventListener("popstate", sync)
     return () => removeEventListener("popstate", sync)
   }, [])
   return [
-    id,
+    route,
+    // 列表 ↔ 详情；去首页时账单路由自然让位
     (next: number | null) => {
       history.pushState({}, "", next === null ? "/" : `/node/${next}`)
-      setId(next)
+      setRoute({ node: next, billing: false })
+      scrollTo(0, 0)
+    },
+    // 列表/详情 ↔ 账单：账单是独立路由，从详情页也能直接过去
+    (on: boolean) => {
+      history.pushState({}, "", on ? "/billing" : "/")
+      setRoute({ node: null, billing: on })
       scrollTo(0, 0)
     },
   ] as const
@@ -227,7 +236,10 @@ export default function App() {
   const [me, setMe] = useState<Me | null>(null)
   const [meError, setMeError] = useState("")
   const { nodes, error, closed } = useNodes()
-  const [open, go] = useNodeRoute()
+  const [route, go, goBilling] = useAppRoute()
+  // 路由拆开用：open 喂给详情逻辑、showBilling 喂给账单页（两者互斥，由路由保证）
+  const open = route.node
+  const showBilling = route.billing
   // 列表的分组标签放在 App：进详情页再回来不丢
   const [group, setGroup] = useState<string | null>(null)
   // 地球侧栏里选中的地区：同理留在这儿
@@ -238,6 +250,11 @@ export default function App() {
   // 异步站点配置也可能关闭地图；清除其筛选，避免没有取消入口或重新开启时复活旧地区
   if (!globeOn && region !== null) setRegion(null)
   const [cardStyle, chooseStyle] = useCardStyle(config.cardStyle)
+  // 账单页是真路由（/billing，刷新存活、可分享）：开着才挂入口；「仅管理员」时
+  // 还要站长登录（/api/me 的 authed）—— 没权限的人连按钮都不给，路由直达也是 404
+  const billingVisible = config.billingOn && (config.billingAccess !== "admin" || !!me?.authed)
+  // 列表页专属的顶栏控件只在真正的列表页挂：进了账单页（open 仍是 null）就收起
+  const browsing = open === null && !showBilling
   // 顶栏搜索框：词与「窄屏那一行展开了没」都留在这儿 —— 进详情页再回来，搜到的还在
   const [query, setQuery] = useState("")
   const [searchOpen, setSearchOpen] = useState(false)
@@ -331,11 +348,11 @@ export default function App() {
   const found = searchNodes(regions.shown, query)
   const listView = { ...view, shown: found.shown }
 
-  // `/node/{id}` 的标签页标题由这里独占（接管逻辑见模块级 ownTitle）
+  // `/node/{id}` 与 `/billing` 的标签页标题由这里独占（接管逻辑见模块级 ownTitle）
   useEffect(() => {
     if (!me) return
-    ownTitle(selected?.name, me.site_name || "Monitor")
-  }, [selected?.name, me])
+    ownTitle(showBilling ? "账单" : selected?.name, me.site_name || "Monitor")
+  }, [selected?.name, me, showBilling])
 
   // 只在没有别的东西可展示时盖整页；`me` 到位后的失败应该落在页面旁边而不是顶上
   if (!me) return (
@@ -365,7 +382,7 @@ export default function App() {
           <div className="flex-1" />
           {/* 搜索（名称 / 地区 / 系统）：只长在列表页 —— 它收窄的就是那张列表
               收起时是一枚方形图标，点开就地长成输入框（窄屏是顶栏下面多一行） */}
-          {open === null && (
+          {browsing && (
             <SearchBox
               value={query}
               onChange={setQuery}
@@ -382,6 +399,20 @@ export default function App() {
           <div className="header-tools -my-1.5 flex min-w-0 items-center gap-3 overflow-x-auto px-1.5 py-1.5">
           {/* 面板是 hub 里的另一个应用，走导航而非路由只放图标、文案进 tooltip：
               这一行是图标条带，带字会把站名挤开 */}
+          {/* 账单入口长在所有页面（列表 / 详情都能直接过去）；没权限（关了 / 仅管理员
+              但没登录）整枚不挂，与地球开关同一口径 */}
+          {billingVisible && (
+            <Button
+              variant={showBilling ? "secondary" : "ghost"}
+              size="icon"
+              aria-pressed={showBilling}
+              onClick={() => goBilling(!showBilling)}
+              title="账单"
+              aria-label="账单"
+            >
+              <Wallet />
+            </Button>
+          )}
           <Button variant="ghost" size="icon" asChild>
             <a
               href="/admin/"
@@ -392,12 +423,12 @@ export default function App() {
             </a>
           </Button>
           {/* 卡片形态：访客自己挑列表用哪种排法（只长在列表页 —— 它就只影响那一页） */}
-          {open === null && (
+          {browsing && (
             <CardStyleMenu value={cardStyle} siteDefault={config.cardStyle} onPick={chooseStyle} />
           )}
           {/* 地球开关：只长在列表页 ★ 站长关掉「节点地球」时**整枚按钮不挂**
               （不是藏／禁用）：关着的功能留按钮就是点了没反应的摆设 */}
-          {open === null && config.globeOn && (
+          {browsing && config.globeOn && (
             <Button
               variant="ghost"
               size="icon"
@@ -429,7 +460,7 @@ export default function App() {
           </div>
         </div>
         {/* 窄屏搜索行：摆成 header 的直接子节点，跟着 sticky 块一起吸顶 */}
-        {open === null && searchOpen && (
+        {browsing && searchOpen && (
           <SearchRow value={query} onChange={setQuery} onClose={closeSearchRow} />
         )}
       </header>
@@ -438,7 +469,21 @@ export default function App() {
       <main className="mx-auto w-full max-w-[max(1280px,85%)] flex-1 space-y-5 px-4 py-4 sm:px-6">
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        {open !== null ? (
+        {showBilling ? (
+          // 路由直达但没权限（billingOn 关了 / 仅管理员而没登录）：给一枚正经 404，
+          // 不亮出内容也不假装是列表页
+          billingVisible ? (
+            <Billing nodes={nodes ?? []} exchangeRates={config.exchangeRates} />
+          ) : (
+            <div className="grid min-h-[60vh] place-items-center">
+              <div className="space-y-3 text-center">
+                <p className="text-4xl font-semibold tracking-tight">404</p>
+                <p className="text-sm text-muted-foreground">账单页未开放或没有权限查看</p>
+                <Button variant="outline" onClick={() => go(null)}>返回首页</Button>
+              </div>
+            </div>
+          )
+        ) : open !== null ? (
           !nodes ? (
             <DetailSkeleton />
           ) : selected ? (
