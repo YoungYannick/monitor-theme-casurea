@@ -4,11 +4,12 @@ import { Info } from "lucide-react"
 
 import { TimeChart } from "@/components/Chart"
 import { PingTooltip } from "@/components/ChartTooltip"
+import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Country, deployed, RemarkChips } from "@/components/NodeCard"
 import { api, type Node } from "@/lib/api"
 import {
-  axisBytes, axisTop, bytes, despike, cpuName, offlineSeconds, osName, rate, uptime,
+  axisBytes, axisTop, bytes, CYCLES, cpuName, despike, money, offlineSeconds, osName, rate, uptime,
 } from "@/lib/format"
 import { hasDetailRemarks, remarkChips } from "@/lib/notes"
 import { latencyLineOptions, latencyStyleFromOptions, remarksOnCards, type RemarkPlacement } from "@/lib/site-settings"
@@ -79,12 +80,21 @@ function despikeWindow(points: { ts: number }[]): number {
   return Math.min(15, Math.max(3, Math.round(420 / step) | 1))
 }
 
-/** 在线时长：没接入（从未上报）与离线是两回事，后者写清已离线多久 */
-function onlineFor(node: Node) {
-  if (node.online) return node.metrics ? uptime(node.metrics.uptime) : "—"
-  if (!deployed(node)) return "未接入"
+/** 名称行那枚状态徽章：在线绿点带时长、离线红点；从未接入返回 null 就不画 */
+function onlineStatus(node: Node): { online: boolean; text: string } | null {
+  if (node.online) return { online: true, text: node.metrics ? `在线 ${uptime(node.metrics.uptime)}` : "在线" }
+  if (!deployed(node)) return null
   const down = offlineSeconds(node)
-  return down !== null && down >= 60 ? `离线 ${uptime(down)}` : "离线"
+  return { online: false, text: down !== null && down >= 60 ? `离线 ${uptime(down)}` : "离线" }
+}
+
+/** 规格那格的「续费」：金额 / 周期 · 到期日；没写价格（免费）返回 null */
+function renewalFor(node: Node): string | null {
+  if (node.price <= 0) return null
+  const cycle = CYCLES[node.billing_cycle] ?? (node.billing_cycle || null)
+  const pay = `${money(node.price, node.currency)}${cycle ? ` / ${cycle}` : ""}`
+  const until = node.expires_at ? `${node.expires_at.slice(0, 10)} 到期` : null
+  return until ? `${pay} · ${until}` : pay
 }
 
 function Fact({ label, value }: { label: string; value?: string | number | null }) {
@@ -114,6 +124,8 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
   const cardChips = remarksOnCards(remarkPlacement ?? "both") ? chips : []
   // 判据与骨架共用一处（hasDetailRemarks），免得骨架对不上高度
   const detailChips = hasDetailRemarks(node, remarkPlacement ?? "both") ? chips : []
+  // 名称行那枚状态徽章（在线/离线 + 时长）；从未接入时为 null
+  const status = onlineStatus(node)
   const [peekOpen, setPeekOpen] = useState(false)
   const peekRef = useRef<HTMLSpanElement | null>(null)
   // 摊开时点别处 / Esc 收起
@@ -512,9 +524,17 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
       {/* 就地展开（紧凑形态点开一行）时不重复身份行与规格：那一行在表格里已报过名字 */}
       {!embedded && (
       <>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Country node={node} />
         <h2 className="truncate text-lg font-medium">{node.name}</h2>
+        {/* 状态与 Agent 版本紧跟名称，胶囊底与下面备注小卡片同一套（secondary） */}
+        {status && (
+          <Badge variant="secondary" className="font-normal">
+            <span className={`size-1.5 shrink-0 rounded-full ${status.online ? "bg-emerald-500" : "bg-red-500"}`} aria-hidden />
+            {status.text}
+          </Badge>
+        )}
+        {node.agent_version && <Badge variant="secondary" className="font-normal">Agent {node.agent_version}</Badge>}
       </div>
 
       <dl className="grid gap-x-6 gap-y-3 md:grid-cols-2 lg:grid-cols-3">
@@ -529,7 +549,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
           value={[node.arch, node.virt !== "none" ? node.virt : ""].filter(Boolean).join(" · ")}
         />
         <Fact label="今日流量" value={`↓ ${bytes(node.day_rx)} · ↑ ${bytes(node.day_tx)}`} />
-        <Fact label="在线时间" value={onlineFor(node)} />
+        <Fact label="续费" value={renewalFor(node)} />
       </dl>
 
       {/* 整页详情的备注：私有 + 公有小卡片，直接落在页面上；没写备注时不占位 */}
