@@ -110,7 +110,9 @@ export function billingRowOf(node: Node, target: string, rates: Record<string, n
     daysLeft: left,
     price: converted,
     monthly: months > 0 ? converted / months : null,
-    remaining: days > 0 && left !== null && left > 0 ? converted * (Math.min(left, days) / days) : null,
+    // 线性折算：日单价 × 剩余天数，不按一个周期封顶（一次付多期时剩余就超过一期价，
+    // 见 money.ts 的同一口径）
+    remaining: days > 0 && left !== null && left > 0 ? converted * (left / days) : null,
     original: null,
   }
 }

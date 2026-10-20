@@ -15,6 +15,7 @@ import { daysUntil } from "./format.ts"
  *     hub 的自定义 `<n>m` 支持 1–1200 月；已有命名周期对应的月数沿用原天数，其他每月按 30 天
  *     一次性买断（`once`）没有「每月」可言，不计入；价格没填（0/空）的不计
  *   剩余价值 = Σ 价格 × 汇率 × (剩余天数 ÷ 周期天数)——已经付掉、还没用掉的那一段
+ *     线性折算不封顶：到期日比一个周期远说明一次付了多期（月付剩 43 天＝付了约 1.43 期）
  *     剩余天数取 hub 算好的 `expires_in`（它按 hub 的日历算，在线节点还会顺延到期日），
  *     旧 hub 没有这个字段时才退回按 `expires_at` 自己数
  *     无到期日（`expires_in` 与 `expires_at` 都没有）的机器没有「剩多少价值」可说，
@@ -162,9 +163,9 @@ export function budgetOf(nodes: Node[], rates: Record<string, number> = FX_CNY):
     // `expires_in` 是数字（含 0、负数）就用它；null / 缺字段才按 `expires_at` 自己数
     const left = typeof node.expires_in === "number" ? node.expires_in : daysUntil(node.expires_at)
     if (typeof left === "number" && left > 0) {
-      // 剩余天数超过一个周期（顺延、或站长填了个很远的日期）时按整期封顶：
-      // 剩余价值不可能比这台机器买价还贵
-      const worth = node.price * fx * (Math.min(left, days) / days)
+      // 线性折算：日单价 × 剩余天数。不按一个周期封顶——到期日比一个周期远，
+      // 说明站长一次付了多期（月付剩 43 天＝付了约 1.43 期），已付未用的就是 43 天的量
+      const worth = node.price * fx * (left / days)
       remaining += worth
       remainingCount++
       remainingItems.push({ name: node.name, amount: worth })
