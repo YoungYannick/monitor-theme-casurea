@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Tooltip } from "radix-ui"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ArrowDown, ArrowUpDown, ArrowUp, ChevronLeft, ChevronRight } from "lucide-react"
 
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { InfoTooltip } from "@/components/InfoTooltip"
+import { Country, RemarkChips } from "@/components/NodeCard"
 import type { Node } from "@/lib/api"
-import { BILLING_CURRENCIES, billingRowOf, moneyOf, type BillingCurrency } from "@/lib/billing"
-import { CYCLES, daysUntil, money } from "@/lib/format"
-import { parseRateOverrides } from "@/lib/money"
+import { BILLING_CURRENCIES, billingRowOf, moneyOf, type BillingCurrency, type BillingRow, type BillingStatus } from "@/lib/billing"
+import { CYCLES, bytes, cpuName, daysUntil, money, osName } from "@/lib/format"
+import { cycleMonthsOf, parseRateOverrides } from "@/lib/money"
+import { regionOf } from "@/lib/globe"
+import { remarkChips } from "@/lib/notes"
+import { COUNTRY_NAMES } from "@/lib/world"
 import { useExchangeRates } from "@/lib/use-exchange-rates"
 
 /**
@@ -46,8 +51,96 @@ function statCard(title: string, value: string | null, hint?: string) {
   )
 }
 
-/** 一行的状态徽章与到期文案 */
-function statusCell(row: ReturnType<typeof billingRowOf>) {
+/** 表格可排序的七列 */
+type SortKey = "name" | "status" | "price" | "cycle" | "expires" | "monthly" | "remaining"
+type Sort = { key: SortKey; dir: "asc" | "desc" }
+
+/** 状态列的排序权重：越紧急越靠前（升序时已到期在最上）；null = 恢复默认权重序 */
+const STATUS_ORDER: Record<BillingStatus, number> = { expired: 0, expiring: 1, active: 2, noexpiry: 3 }
+
+const cycleMonths = (r: BillingRow) => {
+  const m = cycleMonthsOf(r.node.billing_cycle)
+  return Number.isFinite(m) ? m : 0
+}
+
+/** 各列比较器：金额缺汇率/免费当 0；到期按剩余天数升序（无到期日排最后） */
+const SORTERS: Record<SortKey, (a: BillingRow, b: BillingRow) => number> = {
+  name: (a, b) => a.node.name.localeCompare(b.node.name, "zh-CN"),
+  status: (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status],
+  price: (a, b) => (a.price ?? 0) - (b.price ?? 0),
+  cycle: (a, b) => cycleMonths(a) - cycleMonths(b),
+  expires: (a, b) => (a.daysLeft ?? Infinity) - (b.daysLeft ?? Infinity),
+  monthly: (a, b) => (a.monthly ?? 0) - (b.monthly ?? 0),
+  remaining: (a, b) => (a.remaining ?? 0) - (b.remaining ?? 0),
+}
+
+/** 可排序的表头：点击循环「默认（节点权重序）→ 升序 → 降序 → 默认」，图标指方向 */
+function SortTh({ label, k, sort, onPick, align }: { label: string; k: SortKey; sort: Sort | null; onPick: (s: Sort | null) => void; align: "left" | "right" }) {
+  const active = sort?.key === k
+  const Icon = active ? (sort.dir === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown
+  return (
+    <th
+      className={`px-3 py-2 font-normal ${align === "right" ? "text-right" : "text-left"}`}
+      aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        onClick={() => onPick(active && sort!.dir === "asc" ? { key: k, dir: "desc" } : active ? null : { key: k, dir: "asc" })}
+        className={`inline-flex cursor-pointer items-center gap-1 whitespace-nowrap transition-colors hover:text-foreground ${align === "right" ? "flex-row-reverse" : ""}`}
+        title={active && sort!.dir === "desc" ? "恢复默认排序" : active ? "改为降序" : "按此列排序"}
+      >
+        {label}
+        <Icon className={`size-3 ${active ? "" : "opacity-30"}`} />
+      </button>
+    </th>
+  )
+}
+
+/**
+ * 名称列的悬浮卡：这台机器的完整档案——规格行「标签在前、值在后」同一套 dl 排版；
+ * 地区行带旗子与国名（旗子复用卡片的 Country 组件）；备注拆成小卡片（与详情页同一套
+ * RemarkChips：私有带锁描边、公有实心），不是一串原文
+ * 私有备注匿名时 key 根本不存在（hub 不下发），自动不显示，不会占位
+ */
+function nodeInfo(node: Node): ReactNode {
+  const region = regionOf(node)
+  const specs: [string, ReactNode][] = []
+  if (region) {
+    // 旗子 + 国名（· 城市）；城名与国名相同（或没有城名）时只写一个
+    const country = COUNTRY_NAMES[region.code] ?? region.code
+    const city = region.city && region.city !== country ? ` · ${region.city}` : ""
+    specs.push(["地区", <span key="region" className="inline-flex min-w-0 items-center gap-1.5"><Country node={node} /><span className="truncate">{country}{city}</span></span>])
+  }
+  if (node.os) specs.push(["系统", node.virt && node.virt !== "physical" ? `${osName(node.os)} · ${node.virt}` : osName(node.os)])
+  if (node.kernel || node.arch) specs.push(["内核", [node.kernel, node.arch].filter(Boolean).join(" ")])
+  if (node.cpu_cores > 0 || node.cpu_name) specs.push(["CPU", [node.cpu_name ? cpuName(node.cpu_name) : "", node.cpu_cores > 0 ? `${node.cpu_cores} 核` : ""].filter(Boolean).join(" · ")])
+  if (node.mem_total > 0) specs.push(["内存", bytes(node.mem_total)])
+  if (node.disk_total > 0) specs.push(["磁盘", bytes(node.disk_total)])
+  const chips = remarkChips(node)
+  return (
+    <div className="min-w-[12rem] space-y-1.5">
+      <div className="font-medium">{node.name}</div>
+      {specs.length > 0 && (
+        <dl className="space-y-0.5">
+          {specs.map(([label, value]) => (
+            <div key={label} className="grid grid-cols-[3.5em_1fr] gap-x-2">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="min-w-0 break-words">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {chips.length > 0 && (
+        <div className="flex min-w-0 flex-wrap items-center gap-1 border-t pt-1.5">
+          <RemarkChips chips={chips} compact />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 一行的状态徽章与到期文案——纯到期维度（免费在价格列、一次性在周期列各自表达）；
+ * 「即将到期」橙字配「N 天后」，与「已到期」红字配「N 天前」对称 */
+function statusCell(row: BillingRow) {
   switch (row.status) {
     case "expired":
       return (
@@ -56,14 +149,19 @@ function statusCell(row: ReturnType<typeof billingRowOf>) {
           <span className="text-xs text-muted-foreground">{row.daysLeft !== null ? `${-row.daysLeft} 天前` : ""}</span>
         </>
       )
-    case "active":
+    case "expiring":
       return row.daysLeft === 0
         ? <Badge variant="secondary" className="font-normal">今天到期</Badge>
-        : <Badge variant="secondary" className="font-normal">未到期</Badge>
+        : (
+          <>
+            <Badge variant="outline" className="border-orange-500/40 font-normal text-orange-600 dark:text-orange-400">即将到期</Badge>
+            <span className="text-xs text-muted-foreground">{row.daysLeft} 天后</span>
+          </>
+        )
+    case "active":
+      return <Badge variant="secondary" className="font-normal">未到期</Badge>
     case "noexpiry":
       return <Badge variant="secondary" className="font-normal">无期限</Badge>
-    case "free":
-      return <Badge variant="outline" className="font-normal text-muted-foreground">免费</Badge>
   }
 }
 
@@ -90,8 +188,9 @@ function MonthField({ ym, onChange }: { ym: { y: number; m: number }; onChange: 
 }
 
 /**
- * 到期日历：左边月历（角标当天到期台数、背景色阶、悬浮看清单、点击筛选当天），右边「30 天内到期」卡片清单
- * 选中日子由父组件持有（pick）：日历高亮描边，账单表据此筛选；30 天清单与悬浮面板点击某台机器
+ * 到期日历：左边月历（角标当天到期台数、背景色阶、悬浮看清单、点击筛选当天），右边「即将到期」分段清单
+ * （7 / 15 / 30 天三档互斥，档内卡片弹性拉伸、空档不显示）
+ * 选中日子由父组件持有（pick）：日历高亮描边，账单表据此筛选；分段清单与悬浮面板点击某台机器
  * 也是走 pick——跳到它到期的月份、选中那一天，形成「清单/悬浮 → 日历 → 表格」一条联动链
  */
 function BillingCalendar({
@@ -117,6 +216,17 @@ function BillingCalendar({
       .filter((x): x is { n: Node; days: number } => x.days !== null && x.days >= 0 && x.days <= 30)
       .sort((a, b) => a.days - b.days)
   }, [nodes])
+
+  // 拆三档互斥分段（≤7 / 8–15 / 16–30）：紧迫的分出来，长清单也短了；空档整块不显示
+  const bands = useMemo(() => {
+    const b: { label: string; items: { n: Node; days: number }[] }[] = [
+      { label: "7 天内到期", items: [] },
+      { label: "15 天内到期", items: [] },
+      { label: "30 天内到期", items: [] },
+    ]
+    for (const x of upcoming) b[x.days <= 7 ? 0 : x.days <= 15 ? 1 : 2].items.push(x)
+    return b
+  }, [upcoming])
 
   // 即将到期合计金额（目标币种），免费机器不计
   const upcomingSum = useMemo(() => {
@@ -240,7 +350,7 @@ function BillingCalendar({
 
         <div className="min-w-0 flex-1 border-t pt-4 sm:border-l sm:border-t-0 sm:pl-5 sm:pt-0">
           <div className="flex items-baseline justify-between gap-2">
-            <div className="text-sm font-medium">30 天内到期</div>
+            <div className="text-sm font-medium">即将到期</div>
             {upcoming.length > 0 && (
               <div className="tnum text-xs text-muted-foreground">
                 {upcoming.length} 台{upcomingSum > 0 ? ` · 月均合计 ${moneyOf(upcomingSum, currencyCode)}` : ""}
@@ -250,41 +360,52 @@ function BillingCalendar({
           {upcoming.length === 0 ? (
             <p className="mt-2 text-xs text-muted-foreground">30 天内没有机器到期</p>
           ) : (
-            <ul className="mt-2 grid max-h-72 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
-              {upcoming.map(({ n, days }) => {
-                const row = rowById.get(n.id)
-                // 紧迫度：0 天红、≤3 天橙、≤7 天黄、其余常规
-                const bar = days === 0 ? "bg-destructive" : days <= 3 ? "bg-orange-500" : days <= 7 ? "bg-yellow-500" : "bg-primary/60"
-                return (
-                  <li key={n.id}>
-                    <button
-                      onClick={() => focusNode(n)}
-                      className="w-full cursor-pointer rounded-lg border bg-background/40 p-2.5 text-left transition-colors hover:bg-muted/50"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{n.name}</span>
-                        <span className={`tnum shrink-0 text-xs font-medium ${days === 0 ? "text-destructive" : days <= 3 ? "text-orange-500" : "text-muted-foreground"}`}>
-                          {days === 0 ? "今天" : `${days} 天后`}
-                        </span>
-                      </div>
-                      <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
-                        <span className="tnum shrink-0">{n.expires_at!.slice(5, 10)}</span>
-                        <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-                          <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.max(6, 100 - (days / 30) * 100)}%` }} />
-                        </div>
-                        <span className="tnum shrink-0">{n.expires_at!.slice(0, 4)}</span>
-                      </div>
-                      <div className="mt-1 flex items-center justify-between gap-2 text-xs">
-                        <span className="truncate text-muted-foreground">
-                          {Number.isFinite(n.price) && n.price > 0 ? `${money(n.price, n.currency)} / ${cycleLabel(n.billing_cycle)}` : "免费"}
-                        </span>
-                        <span className="tnum shrink-0 text-muted-foreground">{row?.monthly != null ? `月均 ${moneyOf(row.monthly, currencyCode)}` : ""}</span>
-                      </div>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
+            /* 三档互斥分段各自摊开；卡片弹性拉伸填满（封顶 28rem，独一张不独占全宽），
+               多了换行——宽度真正随容器走，不固定 */
+            <div className="mt-2 max-h-72 space-y-4 overflow-y-auto pr-1">
+              {bands.map((band) => band.items.length > 0 && (
+                <section key={band.label}>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                    {band.label} <span className="tnum font-normal">· {band.items.length} 台</span>
+                  </div>
+                  <ul className="flex flex-wrap gap-2">
+                    {band.items.map(({ n, days }) => {
+                      const row = rowById.get(n.id)
+                      // 紧迫度：0 天红、≤3 天橙、≤7 天黄、其余常规
+                      const bar = days === 0 ? "bg-destructive" : days <= 3 ? "bg-orange-500" : days <= 7 ? "bg-yellow-500" : "bg-primary/60"
+                      return (
+                        <li key={n.id} className="min-w-0 flex-[1_1_14rem] max-w-[28rem]">
+                          <button
+                            onClick={() => focusNode(n)}
+                            className="w-full cursor-pointer rounded-lg border bg-background/40 p-2.5 text-left transition-colors hover:bg-muted/50"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium">{n.name}</span>
+                              <span className={`tnum shrink-0 text-xs font-medium ${days === 0 ? "text-destructive" : days <= 3 ? "text-orange-500" : "text-muted-foreground"}`}>
+                                {days === 0 ? "今天" : `${days} 天后`}
+                              </span>
+                            </div>
+                            <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+                              <span className="tnum shrink-0">{n.expires_at!.slice(5, 10)}</span>
+                              <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                                <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.max(6, 100 - (days / 30) * 100)}%` }} />
+                              </div>
+                              <span className="tnum shrink-0">{n.expires_at!.slice(0, 4)}</span>
+                            </div>
+                            <div className="mt-1 flex items-center justify-between gap-2 text-xs">
+                              <span className="truncate text-muted-foreground">
+                                {Number.isFinite(n.price) && n.price > 0 ? `${money(n.price, n.currency)} / ${cycleLabel(n.billing_cycle)}` : "免费"}
+                              </span>
+                              <span className="tnum shrink-0 text-muted-foreground">{row?.monthly != null ? `月均 ${moneyOf(row.monthly, currencyCode)}` : ""}</span>
+                            </div>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </section>
+              ))}
+            </div>
           )}
         </div>
       </div>
@@ -334,20 +455,31 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
   const monthlyTotal = rows.reduce((sum, r) => sum + (r.monthly ?? 0), 0)
   const remainingTotal = rows.reduce((sum, r) => sum + (r.remaining ?? 0), 0)
   const expired = rows.filter((r) => r.status === "expired").length
-  const active = rows.filter((r) => r.status === "active").length
-  const dueSoon = rows.filter((r) => r.status === "active" && r.daysLeft !== null && r.daysLeft <= 7).length
+  // 「未到期」含「即将到期」：都是周期付费且还没过期的机器；0 就写 0，不用「—」这种含糊占位
+  const active = rows.filter((r) => r.status === "active" || r.status === "expiring").length
+  const dueSoon = rows.filter((r) => r.status === "expiring" && r.daysLeft !== null && r.daysLeft <= 7).length
 
   // 日历选中日：表格只列当天到期的机器；null 为不筛
   const [picked, setPicked] = useState<string | null>(null)
-  const shownRows = picked === null ? rows : rows.filter((r) => r.node.expires_at?.slice(0, 10) === picked)
+  // 表头排序：null = 默认权重序（站长在面板里排的节点顺序，保留不动），点击循环 升→降→默认
+  const [sort, setSort] = useState<Sort | null>(null)
+  const shownRows = useMemo(() => {
+    const base = picked === null ? rows : rows.filter((r) => r.node.expires_at?.slice(0, 10) === picked)
+    if (!sort) return base
+    const dir = sort.dir === "asc" ? 1 : -1
+    return [...base].sort((a, b) => dir * SORTERS[sort.key](a, b))
+  }, [rows, picked, sort])
 
-  const priceText = (r: ReturnType<typeof billingRowOf>, amount: number | null) => {
+  // 金额列文案：折好的用目标币种；缺汇率 ≈ 原币种；两者皆无时——价格列是免费（没价格
+  // 与价格 0 在 hub 里等价），月均/剩余列没有概念可显示，占位「—」
+  const priceText = (r: BillingRow, amount: number | null, fallback: string) => {
     if (amount !== null) return moneyOf(amount, currency.code)
     if (r.original) return `≈${moneyOf(r.original.amount, r.original.currency)}`
-    return "—"
+    return fallback
   }
 
   return (
+    <Tooltip.Provider delayDuration={200}>
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-lg font-medium">账单</h1>
@@ -371,9 +503,9 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
         {statCard("总价格", moneyOf(priceTotal, currency.code), "各机器按自身周期的一期价格直接加总（不同周期混在一起，仅供参考）")}
         {statCard("月均总价", moneyOf(monthlyTotal, currency.code), "各节点价格按计费周期摊到每月后求和（免费机器不计入）")}
         {statCard("剩余总价值", moneyOf(remainingTotal, currency.code), "已付、还没用掉的那一段（已到期与无到期日不计入）")}
-        {statCard("节点总数", rows.length > 0 ? `${rows.length} 台` : null)}
-        {statCard("未到期", active > 0 ? `${active} 台` : null, dueSoon > 0 ? `其中 ${dueSoon} 台 7 天内到期` : undefined)}
-        {statCard("已到期", expired > 0 ? `${expired} 台` : null)}
+        {statCard("节点总数", `${rows.length} 台`)}
+        {statCard("未到期", `${active} 台`, dueSoon > 0 ? `其中 ${dueSoon} 台 7 天内到期` : undefined)}
+        {statCard("已到期", `${expired} 台`)}
       </div>
 
       <BillingCalendar nodes={nodes} rows={rows} currencyCode={currency.code} picked={picked} onPick={setPicked} />
@@ -384,27 +516,31 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b bg-muted/40 text-muted-foreground">
-                <th className="px-3 py-2 text-left font-normal">名称</th>
-                <th className="px-3 py-2 text-left font-normal">状态</th>
-                <th className="px-3 py-2 text-right font-normal">价格</th>
-                <th className="px-3 py-2 text-left font-normal">周期</th>
-                <th className="px-3 py-2 text-left font-normal">到期时间</th>
-                <th className="px-3 py-2 text-right font-normal">月均价</th>
-                <th className="px-3 py-2 text-right font-normal">剩余价值</th>
+                <SortTh label="名称" k="name" sort={sort} onPick={setSort} align="left" />
+                <SortTh label="状态" k="status" sort={sort} onPick={setSort} align="left" />
+                <SortTh label="价格" k="price" sort={sort} onPick={setSort} align="right" />
+                <SortTh label="周期" k="cycle" sort={sort} onPick={setSort} align="left" />
+                <SortTh label="到期时间" k="expires" sort={sort} onPick={setSort} align="left" />
+                <SortTh label="月均价" k="monthly" sort={sort} onPick={setSort} align="right" />
+                <SortTh label="剩余价值" k="remaining" sort={sort} onPick={setSort} align="right" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
               {shownRows.map((r) => (
                 <tr key={r.node.id} className="hover:bg-muted/50">
-                  <td className="max-w-[16rem] truncate px-3 py-2 text-sm font-medium">{r.node.name}</td>
+                  <td className="max-w-[16rem] px-3 py-2 text-sm font-medium">
+                    <InfoTooltip text={nodeInfo(r.node)}>
+                      <span className="block truncate">{r.node.name}</span>
+                    </InfoTooltip>
+                  </td>
                   <td className="whitespace-nowrap px-3 py-2">{statusCell(r)}</td>
-                  <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.price)}</td>
+                  <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.price, "免费")}</td>
                   {/* 周期列只认后台记录：免费是一次性的也照写「一次性」（周期与价格两回事），
                       只有真没填周期才占位「—」 */}
                   <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{cycleLabel(r.node.billing_cycle) || "—"}</td>
                   <td className="tnum whitespace-nowrap px-3 py-2">{r.node.expires_at ? r.node.expires_at.slice(0, 10) : <span className="text-muted-foreground">—</span>}</td>
-                  <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.monthly)}</td>
-                  <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.remaining)}</td>
+                  <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.monthly, "—")}</td>
+                  <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.remaining, "—")}</td>
                 </tr>
               ))}
               {rows.length === 0 && (
@@ -442,5 +578,6 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
         )}
       </p>
     </div>
+    </Tooltip.Provider>
   )
 }

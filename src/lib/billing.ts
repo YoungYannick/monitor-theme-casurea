@@ -57,8 +57,12 @@ export function moneyOf(amount: number, currency: string): string {
   return `${symbol}${amount.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-/** 一台机器的账单状态（免费 = 价格 0 或没写；hub 把 0 也存成空，两者等价） */
-export type BillingStatus = "free" | "noexpiry" | "expired" | "active"
+/**
+ * 一台机器的账单状态——**纯到期维度**：有到期日按剩余天数分已到期/即将到期（≤30 天，
+ * 含今天）/未到期，没到期日是无期限 免费是价格的事（价格列表达）、一次性是周期的事
+ * （周期列表达），都不在这四态里；expiring 与日历清单共用的「即将到期」档
+ */
+export type BillingStatus = "noexpiry" | "expired" | "active" | "expiring"
 
 export type BillingRow = {
   node: Node
@@ -79,7 +83,7 @@ export type BillingRow = {
 }
 
 /**
- * 逐台列账：免费的机器也给一行（标「免费」），这样「所有机器」一张表就看全
+ * 逐台列账：免费的机器也给一行（价格列标「免费」），这样「所有机器」一张表就看全
  */
 export function billingRowOf(node: Node, target: string, rates: Record<string, number>): BillingRow {
   const priced = Number.isFinite(node.price) && node.price > 0
@@ -87,11 +91,11 @@ export function billingRowOf(node: Node, target: string, rates: Record<string, n
   const converted = priced ? convert(node.price, source, target, rates) : null
 
   if (!priced) {
-    return { node, status: "free", daysLeft: daysLeftOf(node), price: null, monthly: null, remaining: null, original: null }
+    return { node, status: statusOf(node), daysLeft: daysLeftOf(node), price: null, monthly: null, remaining: null, original: null }
   }
   if (converted === null) {
     return {
-      node, status: statusOf(node, priced), daysLeft: daysLeftOf(node),
+      node, status: statusOf(node), daysLeft: daysLeftOf(node),
       price: null, monthly: null, remaining: null,
       original: { amount: node.price, currency: source },
     }
@@ -102,7 +106,7 @@ export function billingRowOf(node: Node, target: string, rates: Record<string, n
   const left = daysLeftOf(node)
   return {
     node,
-    status: statusOf(node, priced),
+    status: statusOf(node),
     daysLeft: left,
     price: converted,
     monthly: months > 0 ? converted / months : null,
@@ -115,10 +119,9 @@ function daysLeftOf(node: Node): number | null {
   return typeof node.expires_in === "number" ? node.expires_in : daysUntil(node.expires_at)
 }
 
-/** 免费 / 无期限 / 已到期 / 未到期，四选一 */
-function statusOf(node: Node, priced: boolean): BillingStatus {
-  if (!priced) return "free"
+/** 已到期 / 即将到期 / 未到期 / 无期限，四选一（与价格、周期无关） */
+function statusOf(node: Node): BillingStatus {
   const left = daysLeftOf(node)
   if (left === null) return "noexpiry"
-  return left < 0 ? "expired" : "active"
+  return left < 0 ? "expired" : left <= 30 ? "expiring" : "active"
 }

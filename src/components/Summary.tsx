@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp } from "lucide-react"
 import { Tooltip } from "radix-ui"
 
 import { Card } from "@/components/ui/card"
+import { InfoTooltip } from "@/components/InfoTooltip"
 import type { Node } from "@/lib/api"
 import { bytes, rate } from "@/lib/format"
 import { budgetOf, cny, fxNote, parseRateOverrides, type BudgetItem } from "@/lib/money"
@@ -23,22 +24,9 @@ import { speedSeriesOf } from "@/lib/speed-history"
  */
 
 /**
- * 块上的悬停提示：原生 `title` 换成自己的浮层（radix Tooltip，Globe 的信标提示同一套）——
- * 样式跟着主题走、出现更快（300ms），长口径说明能换行，不像系统气泡那样闷成一行
+ * 块上的悬停提示走公共组件（@/components/InfoTooltip）：预算块的口径说明、账单页
+ * 名称列的机器信息卡都是它
  */
-function Tip({ text, children }: { text?: string; children: ReactNode }) {
-  if (!text) return <>{children}</>
-  return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content side="top" sideOffset={6} collisionPadding={8} className="z-50 block max-w-[16rem] rounded-md border bg-popover px-2.5 py-1.5 text-xs leading-relaxed text-popover-foreground shadow-md">
-          {text}
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
-  )
-}
 
 /**
  * 一块读数：一行小标签、一行大数字、一行小字`mt-auto` 把底部那行压到同排最高那块的
@@ -48,7 +36,7 @@ function Tip({ text, children }: { text?: string; children: ReactNode }) {
  *   `onOpen` —— 点击进账单页（账单开着且访客有权时；口径与 App 的 billingVisible 同一份）
  *     能进账单页的人直接看全量账单，不再挂明细浮层，悬停提示也换成指路的那句
  *   `detail` —— 悬停 / 聚焦 / 触屏点按弹出逐台明细浮层（没有账单入口时的那副面孔）
- *     浮层里已带口径行（BudgetDetail 的 note），这时不再挂 Tip，免得两个浮层叠着弹
+ *     浮层里已带口径行（BudgetDetail 的 note），这时不再挂 InfoTooltip，免得两个浮层叠着弹
  */
 function Block({ title, hint, detail, onOpen, children }: {
   title: string
@@ -76,7 +64,7 @@ function Block({ title, hint, detail, onOpen, children }: {
     return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey) }
   }, [open])
   return (
-    <Tip text={onOpen ? "点击进入账单页，看逐台的月摊与剩余价值明细" : detail ? undefined : hint}>
+    <InfoTooltip text={onOpen ? "点击进入账单页，看逐台的月摊与剩余价值明细" : detail ? undefined : hint}>
       <div
         ref={ref}
         className={`relative flex min-w-0 flex-col${interactive ? " cursor-pointer rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" : ""}`}
@@ -106,7 +94,7 @@ function Block({ title, hint, detail, onOpen, children }: {
           </span>
         )}
       </div>
-    </Tip>
+    </InfoTooltip>
   )
 }
 
@@ -326,7 +314,7 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
   const oldQuote = Date.now() - Date.parse(`${fx.snapshot.date}T00:00:00Z`) >= 3 * 86_400_000
   const status = needsFx ? `每日参考汇率${fx.snapshot.date ? ` · ${fx.snapshot.date}` : ""} · ${stateLabel}${oldQuote ? "（旧汇率）" : ""}` : "自定义汇率"
   const received = fx.origin === "empty" ? "等待首次成功获取" : `获取于 ${new Date(fx.snapshot.fetchedAtMs).toLocaleString("zh-CN")}`
-  // 两句口径说明：块的悬停提示（Tip）与明细浮层的尾行同一份，别让两处说岔
+  // 两句口径说明：块的悬停提示（InfoTooltip）与明细浮层的尾行同一份，别让两处说岔
   const monthlyNote = `各节点的价格按计费周期摊到每个月后相加；一次性买断与没填价格的不计入${note}`
   const remainingNote = `已经付掉、还没用掉的那一段：价格 × 剩余天数 ÷ 周期天数；没填价格、无到期日与一次性买断的不计入${note}`
 
