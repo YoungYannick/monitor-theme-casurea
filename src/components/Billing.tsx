@@ -207,7 +207,15 @@ function BillingCalendar({
   onPick: (day: string | null) => void
 }) {
   const today = new Date()
-  const [ym, setYm] = useState({ y: today.getFullYear(), m: today.getMonth() })
+  // 用户手动翻到的月份（浏览位）；选中日 picked 存在时显示派生月，清除后回到浏览位——
+  // 不用 effect 对齐，渲染期直接派生（表格「到期时间」列点击后日历跟着翻页就是这么来的）
+  const [browsed, setBrowsed] = useState({ y: today.getFullYear(), m: today.getMonth() })
+  const pickedYm = useMemo(() => {
+    if (!picked) return null
+    const [y, m] = picked.split("-").map(Number)
+    return Number.isInteger(y) && Number.isInteger(m) ? { y, m: m - 1 } : null
+  }, [picked])
+  const ym = pickedYm ?? browsed
 
   // 30 天内到期（含今天），按剩余天数升序；天数口径与表格状态列同一套 daysUntil
   const upcoming = useMemo(() => {
@@ -253,18 +261,23 @@ function BillingCalendar({
   const first = new Date(ym.y, ym.m, 1)
   const daysInMonth = new Date(ym.y, ym.m + 1, 0).getDate()
   const offset = (first.getDay() + 6) % 7 // 周一排头
+  // 翻页 / 回本月 / 年月选择：改的是浏览位；选中日还挂着时一并清掉——
+  // 不然 ym 被 pickedYm 压着，用户翻了页页面却不动
+  const browse = (v: { y: number; m: number }) => {
+    setBrowsed(v)
+    if (picked !== null) onPick(null)
+  }
   const move = (delta: number) => {
     const d = new Date(ym.y, ym.m + delta, 1)
-    setYm({ y: d.getFullYear(), m: d.getMonth() })
+    browse({ y: d.getFullYear(), m: d.getMonth() })
   }
   const dayKey = (d: number) => `${ym.y}-${String(ym.m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`
 
-  // 选中某台机器：日历跳到它到期的月份并选中那一天（表格随之筛选）
+  // 选中某台机器：选中它到期的那一天（表格随之筛选；日历月份由 pickedYm 派生自动跟过去）
   const focusNode = (n: Node) => {
     if (!n.expires_at) return
     const [y, m, d] = n.expires_at.slice(0, 10).split("-").map(Number)
-    setYm({ y, m: m - 1 })
     onPick(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`)
   }
 
@@ -273,14 +286,14 @@ function BillingCalendar({
       <div className="flex flex-col gap-5 sm:flex-row">
         <div className="mx-auto w-full max-w-[19rem] shrink-0 sm:mx-0">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <MonthField ym={ym} onChange={setYm} />
+            <MonthField ym={ym} onChange={browse} />
             <div className="flex items-center gap-1">
               <button className="tap tap-6 rounded-md text-muted-foreground transition-colors hover:text-foreground" onClick={() => move(-1)} aria-label="上月" title="上月">
                 <ChevronLeft className="size-4" />
               </button>
               <button
                 className="tap tap-6 rounded-md text-xs text-muted-foreground transition-colors hover:text-foreground"
-                onClick={() => setYm({ y: today.getFullYear(), m: today.getMonth() })}
+                onClick={() => browse({ y: today.getFullYear(), m: today.getMonth() })}
                 title="回本月"
               >
                 本月
@@ -451,12 +464,13 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
     }
   }
 
-  const priceTotal = rows.reduce((sum, r) => sum + (r.price ?? 0), 0)
   const monthlyTotal = rows.reduce((sum, r) => sum + (r.monthly ?? 0), 0)
   const remainingTotal = rows.reduce((sum, r) => sum + (r.remaining ?? 0), 0)
   const expired = rows.filter((r) => r.status === "expired").length
   // 「未到期」含「即将到期」：都是周期付费且还没过期的机器；0 就写 0，不用「—」这种含糊占位
   const active = rows.filter((r) => r.status === "active" || r.status === "expiring").length
+  // 无到期日（`expires_in` 与 `expires_at` 都没有）的机器：与未到期/已到期合计正好等于总数
+  const noexpiry = rows.filter((r) => r.status === "noexpiry").length
   const dueSoon = rows.filter((r) => r.status === "expiring" && r.daysLeft !== null && r.daysLeft <= 7).length
 
   // 日历选中日：表格只列当天到期的机器；null 为不筛
@@ -498,14 +512,15 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
         </label>
       </div>
 
-      {/* 汇总：总价、月均、剩余价值、台数六张，未到期卡悬浮提示 7 日内到期数 */}
+      {/* 汇总：剩余总价值、月均总支出两张金额卡在前；台数四张（未到期/已到期/无期限合计等于总数，未到期卡悬浮提示 7 日内到期数）
+          按可用时间算的口径就是剩余价值 */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        {statCard("总价格", moneyOf(priceTotal, currency.code), "各机器按自身周期的一期价格直接加总（不同周期混在一起，仅供参考）")}
-        {statCard("月均总价", moneyOf(monthlyTotal, currency.code), "各节点价格按计费周期摊到每月后求和（免费机器不计入）")}
         {statCard("剩余总价值", moneyOf(remainingTotal, currency.code), "已付、还没用掉的那一段（已到期与无到期日不计入）")}
+        {statCard("月均总支出", moneyOf(monthlyTotal, currency.code), "各节点价格按计费周期摊到每月后求和（免费机器不计入）")}
         {statCard("节点总数", `${rows.length} 台`)}
         {statCard("未到期", `${active} 台`, dueSoon > 0 ? `其中 ${dueSoon} 台 7 天内到期` : undefined)}
         {statCard("已到期", `${expired} 台`)}
+        {statCard("无期限", `${noexpiry} 台`, "没填到期日的机器（多为免费或一次性买断）")}
       </div>
 
       <BillingCalendar nodes={nodes} rows={rows} currencyCode={currency.code} picked={picked} onPick={setPicked} />
@@ -538,7 +553,21 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
                   {/* 周期列只认后台记录：免费是一次性的也照写「一次性」（周期与价格两回事），
                       只有真没填周期才占位「—」 */}
                   <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{cycleLabel(r.node.billing_cycle) || "—"}</td>
-                  <td className="tnum whitespace-nowrap px-3 py-2">{r.node.expires_at ? r.node.expires_at.slice(0, 10) : <span className="text-muted-foreground">—</span>}</td>
+                  {/* 到期时间可点：日历翻到那个月并选中那一天（表格随之只列当天到期的；
+                      再点一次取消筛选）；没到期日的机器没有日历目标，保持「—」 */}
+                  <td className="tnum whitespace-nowrap px-3 py-2">
+                    {r.node.expires_at ? (
+                      <button
+                        onClick={() => setPicked(picked === r.node.expires_at!.slice(0, 10) ? null : r.node.expires_at!.slice(0, 10))}
+                        title="在日历中查看"
+                        className="cursor-pointer underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
+                      >
+                        {r.node.expires_at.slice(0, 10)}
+                      </button>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
                   <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.monthly, "—")}</td>
                   <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.remaining, "—")}</td>
                 </tr>
