@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { LatencyPanel, PeekLatency } from "@/components/Latency"
 import { Meter } from "@/components/Meter"
+import { TextHighlight } from "@/components/TextHighlight"
+import { WideCard } from "@/components/WideCard"
 import type { Node } from "@/lib/api"
 import { CYCLES, FOREVER, bytes, daysUntil, money, offlineSeconds, pair, percent, rate, uptime } from "@/lib/format"
 import { remarkChips, type RemarkChip } from "@/lib/notes"
@@ -36,6 +38,20 @@ export function monthUsage(node: Node): number {
 // that never connected is the only case with nothing to show.
 export function deployed(node: Node) {
   return node.cpu_cores > 0 || node.mem_total > 0
+}
+
+/**
+ * 离线标记：卡片正中一枚红字「离线」，背后一层半透明遮挡把读数压下去——离线机器的
+ * 数字停在掉线那一刻，不再假装实时 ★不沉底排序、不禁点：遮罩不接指针事件，点击
+ * 落到卡片本体上，照样进详情页 「未接入」（从未上过报）不算离线，不挂这枚
+ */
+export function OfflineMark() {
+  return (
+    <span data-offline-mark="" aria-hidden className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-lg">
+      <span className="absolute inset-0 rounded-lg bg-card/60" />
+      <span className="relative text-sm font-semibold text-red-500">离线</span>
+    </span>
+  )
 }
 
 // 上游的「圆点 + 在线时长」徽章与详细档标题行的状态点都已随本主题删除：在线与否
@@ -153,7 +169,7 @@ function trafficFoot(node: Node) {
  * 卡片（详细档标题行、经典/延迟的浮层）与整页详情、紧凑展开行共用这一套——写法只有一处，
  * 合并后的次序（私有在前、公有在后）也由 `@/lib/notes` 的 `remarkChips` 一处决定
  */
-export function RemarkChips({ chips, max = "full", keep = false }: { chips: RemarkChip[]; max?: string; keep?: boolean }) {
+export function RemarkChips({ chips, max = "full", keep = false, compact = false }: { chips: RemarkChip[]; max?: string; keep?: boolean; compact?: boolean }) {
   return (
     <>
       {chips.map((c, i) => (
@@ -162,7 +178,7 @@ export function RemarkChips({ chips, max = "full", keep = false }: { chips: Rema
           variant={c.own ? "outline" : "secondary"}
           // keep（详细档标题行那一格）：小卡片保持自然宽度、不许被挤扁；
           // 放不下的部分由外层裁掉、在悬浮层里看全
-          className={(keep ? "shrink-0 " : "min-w-0 shrink ") + "font-normal " + (c.own ? "gap-1 text-muted-foreground" : "")}
+          className={(keep ? "shrink-0 " : "min-w-0 shrink ") + "font-normal " + (c.own ? "gap-1 text-muted-foreground " : "") + (compact ? "px-1.5 py-0 text-[11px] leading-[14px]" : "")}
           style={{ maxWidth: max === "full" ? undefined : max }}
           title={c.own ? "仅自己可见：" + c.text : c.text}
         >
@@ -174,15 +190,19 @@ export function RemarkChips({ chips, max = "full", keep = false }: { chips: Rema
   )
 }
 
-export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remarkPlacement }: {
+export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remarkPlacement, terms, selected }: {
   node: Node
   onOpen: () => void
   /** 指针或键盘刚落到这张卡片上：先把手头这块 chunk（详情页的图表那 391KB）取回来 */
   onWarm?: () => void
   latencyLines: string
-  cardStyle: "classic" | "latency" | "detailed" | "detailedNoLatency" | "plain"
+  cardStyle: "classic" | "latency" | "detailed" | "detailedNoLatency" | "plain" | "wide"
   /** 「备注显示位置」：`detail` 时卡片这一侧一枚都不摊（整页详情照旧，见 NodeDetail） */
   remarkPlacement?: RemarkPlacement
+  /** 搜索命中词：名字里命中的片段描色（见 TextHighlight）；没在搜时是空数组 */
+  terms?: string[]
+  /** 搜索键盘光标（↑↓）停在这张卡上：加一圈描边 */
+  selected?: boolean
 }) {
   const m = node.metrics
   // 详细档（含「详细·无延迟」）：图标、元信息行与三枚读数盒都只在它里面出现；配色仍与另外两档同一套灰
@@ -218,8 +238,14 @@ export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remark
     document.addEventListener("pointerdown", onDown)
     return () => document.removeEventListener("pointerdown", onDown)
   }, [peekOpen])
+  // 宽卡是第六档独立版式（见 WideCard），这里直接委托过去，不挤进下面的分支
+  // ★必须放在所有 hooks 之后：访客在顶栏换卡片形态时同一个组件实例会以不同档位重渲染，
+  //   提前 return 会让 hooks 的调用顺序在两次渲染之间错位（rules-of-hooks）
+  if (cardStyle === "wide") return <WideCard node={node} onOpen={onOpen} onWarm={onWarm} remarkPlacement={remarkPlacement} terms={terms} selected={selected} />
   const price = priceText(node)
   const cycle = cycleText(node)
+  // 已部署但掉线：挂离线标记（未接入的不算，见 OfflineMark）
+  const offline = !node.online && deployed(node)
 
   // 卡片底部那一行网络：经典、简约、延迟三档共用**同一个节点**——一行两段，
   // 左边实时速率（前景色）、右边累计总量（弱化灰）；箭头用文字 ↓ ↑，整段可原样复制
@@ -254,11 +280,15 @@ export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remark
       onPointerOver={onWarm}
       onFocus={onWarm}
       onTouchStart={onWarm}
+      // data-node-card 是搜索键盘光标滚进视野的锚点（NodeList 的 scrollIntoView）；
+      // data-selected 是「当前被键盘选中」的标记（护栏读它，不用去解析类名）
+      data-node-card={node.id}
+      data-selected={selected ? "1" : undefined}
       // min-w-0: a grid item sizes to its content unless told otherwise, and the
       // name line below does not wrap, so on a phone the card would grow past its
       // column and scroll the page sideways. The truncate inside only takes effect
       // once the card is allowed to be narrower.
-      className="min-w-0 cursor-pointer gap-0 p-4 transition-colors hover:border-foreground/25"
+      className={`min-w-0 cursor-pointer gap-0 p-4 transition-colors hover:border-foreground/25${offline ? " relative" : ""}${selected ? " outline-2 outline-offset-1 outline-ring" : ""}`}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onOpen())}
@@ -267,8 +297,8 @@ export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remark
           系统与到期在详情页写得更全，挤在卡片上只会把名字推到省略号 */}
       <div className="flex min-w-0 items-center gap-2">
         <Country node={node} />
-        {/* 简约档只把名字加粗一档，文字与位置照旧 */}
-        <h3 className={`min-w-0 truncate ${plain ? "font-semibold" : "font-medium"}`}>{node.name}</h3>
+        {/* 简约档只把名字加粗一档，文字与位置照旧；搜索命中的片段在这层里描色 */}
+        <h3 className={`min-w-0 truncate ${plain ? "font-semibold" : "font-medium"}`}><TextHighlight text={node.name} terms={terms} /></h3>
         {/* 「详细」档的备注：挂在标题行右端 ★名字优先：备注这格 `grow basis-0`——
             基准尺寸是 0，从不参与「谁先被压」的竞争，不够就自己截断（宁可备注隐身，
             也不动机器名） 「经典」档收进右上角浮层，「简约」档不挂，
@@ -440,6 +470,7 @@ export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remark
           还没有接入在后台生成安装命令并执行一次
         </p>
       )}
+      {offline && <OfflineMark />}
     </Card>
   )
 }

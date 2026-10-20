@@ -2,7 +2,7 @@
   "name": "Casurea",
   "short": "casurea",
   "description": "Casurea - Monitor 极简探针的一个二创主题包",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "author": "YannickYoung",
   "url": "https://github.com/YoungYannick/monitor-theme-casurea",
   "config": [
@@ -75,6 +75,10 @@
         {
           "value": "detailedNoLatency",
           "label": "详细·无延迟：与详细相同，但不含三网延迟"
+        },
+        {
+          "value": "wide",
+          "label": "宽卡：横向大卡，六块版式、不含延迟，列数随容器自适应"
         },
         {
           "value": "compact",
@@ -153,7 +157,7 @@
       "key": "exchangeRates",
       "label": "自定义汇率",
       "default": "",
-      "help": "可选，留空自动获取最新每日参考价 每行 CODE=人民币汇率，例如 USD=7.1；代表1单位该币种等于多少人民币 自定义值优先，可补充无公开报价的币种"
+      "help": "可选，留空自动获取最新每日参考汇率 每行 CODE=人民币汇率，例如 USD=7.1；代表1单位该币种等于多少人民币 自定义值优先，可补充查不到汇率的币种"
     },
     {
       "type": "boolean",
@@ -207,6 +211,15 @@
         }
       ],
       "help": "站点明暗；按北京时间自动那档＝19:00–07:00 用暗色（访客可自行覆盖）"
+    },
+    {
+      "type": "number",
+      "key": "pageWidth",
+      "label": "内容宽度",
+      "default": 85,
+      "min": 60,
+      "max": 100,
+      "help": "页面内容占屏幕的百分比，60–100；窄屏（<1506px）仍是全宽，只有宽屏生效"
     }
   ]
 }

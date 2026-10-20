@@ -3,11 +3,14 @@ import type { Node } from "@/lib/api"
 // （Node 自己剥类型），而 Node 不认 tsconfig 里那个 `@/` 别名 —— 值导入一律写相对路径，
 // 类型导入保留别名（会被剥掉，不影响运行） 本仓库已有的 lib 互引用也都是这么写的
 import { regionOf } from "./globe.ts"
+import { publicRemark } from "./notes.ts"
 import { CITY_HINTS } from "./world.ts"
 
 /**
- * 顶栏搜索框的口径：一台机器只要**名称 / 地区 / 系统**里有一处命中就算中
- *   名称 —— `node.name`；地区 —— 与地球同一个来源（`regionOf`），外加节点分组；系统 —— `node.os`
+ * 顶栏搜索框的口径：一台机器只要**名称 / 备注 / 地区 / 系统**里有一处命中就算中
+ *   名称 —— `node.name`；备注 —— 公开 `public_remark` 与私有 `remark`（私有只在登录态
+ *   下发，访客侧拿不到、自然也搜不到）；地区 —— 与地球同一个来源（`regionOf`），
+ *   外加节点分组；系统 —— `node.os`
  *
  * ★**中文/英文/代码都能搜**：访客写「东京」，站长写的是 `Tokyo`；写「日本」，机器上是 `JP`
  * 所以除了原样子串匹配，每个关键词还会**展开成一族同义词**再匹配：
@@ -20,7 +23,8 @@ import { CITY_HINTS } from "./world.ts"
  * 短码（≤3 个拉丁字符，如 `de`/`jp`/`eu`）按**词边界**匹配，其余按子串：不然「欧洲」
  * 展开出来的 `de` 会把每台 Debian 都算成欧洲的访客自己打的词仍按子串，`deb` 照样搜到 `Debian`
  *
- * 关键词按空白拆开，**全都要命中**（AND）；大小写不敏感
+ * 备选短语按 `|` 拆开（全角 ｜ 也认），**命中任意一个即可**（OR）；空格不拆词——
+ * 「东京 4c」按**整体短语**匹配（分隔符从空格换成了 `|`，正是这次要修的）；大小写不敏感
  * 只匹配这三样：搜索结果要能对上页面上看得见的字段，搜到一台却看不出它为什么中，
  * 比搜不到更让人困惑
  */
@@ -29,7 +33,7 @@ export type SearchResult = {
   shown: Node[]
   /** 搜索框里那串词（原样留着，报空态时要原样回显给访客） */
   query: string
-  /** 拆好的关键词（小写） */
+  /** 拆好的备选短语（小写，可含空格） */
   terms: string[]
   /** 在搜吗（关键词非空） */
   active: boolean
@@ -118,9 +122,6 @@ const AREA_CODES: Record<string, string[]> = {
   非洲: ["za"],
 }
 
-/** 族里所有**带空格**的词（`west us` / `hong kong` / `north america`…）——拆词时要护着它们 */
-const PHRASE_WORDS = new Set(WORD_FAMILIES.flat().filter((word) => word.includes(" ")))
-
 /** 一个词落在哪一族里（不在任何族里就是空数组）族里的词都是小写 */
 function familyWordsOf(word: string): string[] {
   const w = word.toLowerCase()
@@ -168,13 +169,11 @@ function areasOf(code: string): string[] {
   return out
 }
 
-/** 拆关键词：全角/不换行空格先换成半角，再按空白拆，去掉空片段、统一小写 */
+/** 拆关键词：全角/不换行空格先换成半角，按 `|`（全角 ｜ 也认）拆成备选短语，去空片段、统一小写
+ *  空格**留在词里**：「东京 4c」是一个整体，不再像旧版那样按空白拆成两个词 */
 export function searchTerms(query: string): string[] {
-  const whole = query.replace(/[\u3000\u00a0]/g, " ").trim().toLowerCase()
-  // 整串本身就是一个带空格的族词（`west us` / `hong kong` / `north america`）时**别拆**：
-  // 拆成两个词就再也拼不回那个短语了（`west us` 拆开只剩两个谁也不认的词）
-  if (PHRASE_WORDS.has(whole)) return [whole]
-  return whole.split(/\s+/).filter(Boolean)
+  const whole = query.replace(/[\u3000\u00a0]/g, " ").toLowerCase()
+  return whole.split(/[|｜]/).map((term) => term.trim()).filter(Boolean)
 }
 
 /** 一台机器**能被搜到的全部文本**（小写）导出它是为了让单测逐字钉住都收了哪些字段 */
@@ -185,6 +184,9 @@ export function searchText(node: Node): string {
     node.name,
     node.group ?? "",
     node.os,
+    // 公开备注与私有备注原文（私有只在登录态下发，访客侧拿不到、自然也搜不到）
+    publicRemark(node),
+    (node.remark ?? "").trim(),
     // 国家码两种写法都收（hub 给的是大写 ISO，访客手打可能是小写）
     code,
     // 这个码所在那一族的全部词：中文名 + 英文名 + 码 —— 于是「日本」「japan」「jp」都搜得到它
@@ -211,7 +213,7 @@ function matchesWord(text: string, word: string): boolean {
 /**
  * 一个关键词对应的一组匹配器：**原样**那一枚排在最前（访客打的词永远按子串匹配，
  * 于是 `deb` 照样命中 `Debian`），后面是展开出来的同族词、洲内国家码与城市名（按上面那条规则）
- * 这一组之间是「或」的关系，词与词之间是「且」
+ * 这一组之间是「或」的关系，备选短语之间也是「或」（`a|b` 命中任一短语即可）
  */
 function matchersFor(term: string): ((text: string) => boolean)[] {
   const t = term.toLowerCase()
@@ -232,6 +234,30 @@ function matchersFor(term: string): ((text: string) => boolean)[] {
   return out
 }
 
+/** 一段文本里命中词（大小写不敏感、字面出现）的区间列表，供搜索描色（TextHighlight）用 */
+export function highlightRanges(text: string, terms: string[]): [number, number][] {
+  const lower = text.toLowerCase()
+  const spans: [number, number][] = []
+  for (const term of terms) {
+    if (!term.trim()) continue
+    let from = 0
+    for (;;) {
+      const at = lower.indexOf(term, from)
+      if (at < 0) break
+      spans.push([at, at + term.length])
+      from = at + Math.max(1, term.length)
+    }
+  }
+  spans.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+  const out: [number, number][] = []
+  for (const [s, e] of spans) {
+    const last = out[out.length - 1]
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e)
+    else out.push([s, e])
+  }
+  return out
+}
+
 /** 按关键词收窄一组节点 空词＝没在搜（原样返回，连数组都不必重建） */
 export function searchNodes(nodes: Node[], query: string): SearchResult {
   const terms = searchTerms(query)
@@ -241,8 +267,8 @@ export function searchNodes(nodes: Node[], query: string): SearchResult {
   const matchers = terms.map(matchersFor)
   const shown = nodes.filter((node) => {
     const text = searchText(node)
-    // 词之间「且」：每个词那一组里命中一枚就算这个词过了
-    return matchers.every((group) => group.some((match) => match(text)))
+    // 备选短语之间「或」：任一短语的那组匹配器里命中一枚，这台就算中
+    return matchers.some((group) => group.some((match) => match(text)))
   })
   return { shown, query, terms, active: true, hit: shown.length, total: nodes.length }
 }

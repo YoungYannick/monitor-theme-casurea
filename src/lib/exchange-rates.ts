@@ -1,11 +1,10 @@
 import { FIAT_CODES, KNOWN_CURRENCY_CODES } from "./currency-codes.ts"
-import { BUILTIN_FX_DATE, BUILTIN_FX_RATES } from "./exchange-rates-snapshot.ts"
 
 /** 所有内部汇率均为「1 单位币种 = N CNY」，与远程 CNY 基准报价的方向相反 */
 export type FxSnapshot = {
   rates: Readonly<Record<string, number>>
   date: string
-  source: "currency-api"
+  source: "exchangerate-fun" | "currency-api"
   fetchedAtMs: number
 }
 
@@ -13,20 +12,22 @@ export type FxState = {
   snapshot: FxSnapshot
   loading: boolean
   failed: boolean
-  origin: "builtin" | "cache" | "network"
+  origin: "empty" | "cache" | "network"
 }
 
 export const FX_CACHE_KEY = "casurea:exchange_rates:v1"
 export const FX_ENDPOINTS = Object.freeze([
-  "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/cny.json",
-  "https://latest.currency-api.pages.dev/v1/currencies/cny.json",
-])
+  { source: "exchangerate-fun", url: "https://api.exchangerate.fun/latest?base=CNY" },
+  { source: "currency-api", url: "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/cny.json" },
+  { source: "currency-api", url: "https://latest.currency-api.pages.dev/v1/currencies/cny.json" },
+] as const)
 
-export const BUILTIN_FX: FxSnapshot = Object.freeze({
-  rates: BUILTIN_FX_RATES,
-  date: BUILTIN_FX_DATE,
-  source: "currency-api",
-  // 内置数据不冒充访客已经联网获取的缓存；origin=builtin 始终触发首次更新
+/** 取到任何汇率之前的占位：空表驱动首次更新；不内置离线快照（三个网络源足够兜底）
+ *  source 对齐首位源——展示层的「汇率来源」链接跟着它走 */
+export const EMPTY_FX: FxSnapshot = Object.freeze({
+  rates: Object.freeze({}),
+  date: "",
+  source: "exchangerate-fun",
   fetchedAtMs: 0,
 })
 
@@ -55,19 +56,20 @@ function validDate(value: unknown, now: number): value is string {
   return Number.isFinite(time) && utcDay(time) === value && value <= utcDay(now)
 }
 
-/** 拒绝不完整响应；无效或未知项不计入，也不会被替换为 0/1 */
-function parseRates(value: unknown, inverse: boolean): Readonly<Record<string, number>> | null {
+/** 拒绝不完整响应；无效或未知项不计入，也不会被替换为 0/1
+ *  `inverse`：输入是 CNY 基准表（1 CNY = N 币种），倒数成内部口径「1 币种 = N CNY」
+ *  `lowercase`：键的大小写（currency-api 给小写、exchangerate.fun 与缓存给大写） */
+function parseRates(value: unknown, inverse: boolean, lowercase: boolean): Readonly<Record<string, number>> | null {
   const source = object(value)
   if (!source) return null
   const entries = Object.entries(source)
   if (entries.length > MAX_ENTRIES) return null
-  const identityKey = inverse ? "cny" : "CNY"
+  const identityKey = lowercase ? "cny" : "CNY"
   if (!Object.hasOwn(source, identityKey) || source[identityKey] !== 1) return null
   const rates: Record<string, number> = {}
   for (const [rawCode, value] of entries) {
-    const code = inverse ? rawCode.toUpperCase() : rawCode
-    // 远程字段必须是小写，缓存必须是大写；拒绝同一币种的大小写重复键
-    if (rawCode !== (inverse ? code.toLowerCase() : code) || !KNOWN_CURRENCY_CODES.has(code) || !validRate(value)) continue
+    const code = lowercase ? rawCode.toUpperCase() : rawCode
+    if (rawCode !== (lowercase ? code.toLowerCase() : code) || !KNOWN_CURRENCY_CODES.has(code) || !validRate(value)) continue
     const rate = inverse ? 1 / value : value
     if (validRate(rate)) rates[code] = rate
   }
@@ -80,8 +82,24 @@ export function parsePayload(payload: unknown, now = Date.now()): FxSnapshot | n
   try {
     const data = object(payload)
     if (!data || !Object.hasOwn(data, "date") || !Object.hasOwn(data, "cny") || !validDate(data.date, now)) return null
-    const rates = parseRates(data.cny, true)
+    const rates = parseRates(data.cny, true, true)
     return rates ? Object.freeze({ rates, date: data.date, source: "currency-api", fetchedAtMs: now }) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * exchangerate.fun 的 `latest?base=CNY`：`{ base, rates: { CNY:1, USD:0.14, ... }, date? }`
+ * 与 currency-api 同一套 CNY 基准倒数口径（复用 parseRates）；上游没给 date 时按「今天」记
+ */
+export function parseExchangerateFun(payload: unknown, now = Date.now()): FxSnapshot | null {
+  try {
+    const data = object(payload)
+    const rates = parseRates(object(data?.rates), true, false)
+    if (!rates) return null
+    const date = typeof data?.date === "string" && validDate(data.date, now) ? data.date : utcDay(now)
+    return Object.freeze({ rates, date, source: "exchangerate-fun", fetchedAtMs: now })
   } catch {
     return null
   }
@@ -93,13 +111,14 @@ export function parseCache(raw: unknown, now = Date.now()): FxSnapshot | null {
     if (typeof raw !== "string" || new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) return null
     const data = object(JSON.parse(raw))
     const snapshot = object(data?.snapshot)
-    if (!data || data.version !== 1 || !snapshot || snapshot.source !== "currency-api" || !validDate(snapshot.date, now)) return null
+    const source = (snapshot as { source?: unknown } | null)?.source
+    if (!data || data.version !== 1 || !snapshot || !(source === "currency-api" || source === "exchangerate-fun") || !validDate(snapshot.date, now)) return null
     const fetchedAtMs = snapshot.fetchedAtMs
     if (typeof fetchedAtMs !== "number" || !Number.isFinite(fetchedAtMs) || fetchedAtMs <= 0 || fetchedAtMs > now) return null
     // 报价不可能晚于获取日期；防伪造历史获取时间绕过刷新检查
     if (snapshot.date > utcDay(fetchedAtMs)) return null
-    const rates = parseRates(snapshot.rates, false)
-    return rates ? Object.freeze({ rates, date: snapshot.date, source: "currency-api", fetchedAtMs }) : null
+    const rates = parseRates(snapshot.rates, false, false)
+    return rates ? Object.freeze({ rates, date: snapshot.date, source: source as "currency-api" | "exchangerate-fun", fetchedAtMs }) : null
   } catch {
     return null
   }
@@ -177,8 +196,7 @@ export function createFxStore(options: FxStoreOptions = {}) {
   const retryMs = duration(options.retryMs, DEFAULT_RETRY_MS)
   let cached: FxSnapshot | null = null
   try { cached = parseCache(storage()?.getItem(FX_CACHE_KEY), now()) } catch { /* 浏览器可能拒绝 storage getter */ }
-  if (cached && cached.date < BUILTIN_FX.date) cached = null
-  let state: FxState = { snapshot: cached ?? BUILTIN_FX, origin: cached ? "cache" : "builtin", loading: false, failed: false }
+  let state: FxState = { snapshot: cached ?? EMPTY_FX, origin: cached ? "cache" : "empty", loading: false, failed: false }
   const listeners = new Set<() => void>()
   let timer: unknown
   let active: AbortController | undefined
@@ -202,7 +220,7 @@ export function createFxStore(options: FxStoreOptions = {}) {
   }
 
   function due() {
-    return state.failed || state.origin === "builtin" || now() - state.snapshot.fetchedAtMs >= refreshMs || utcDay(now()) !== utcDay(state.snapshot.fetchedAtMs)
+    return state.failed || state.origin === "empty" || now() - state.snapshot.fetchedAtMs >= refreshMs || utcDay(now()) !== utcDay(state.snapshot.fetchedAtMs)
   }
 
   function arm(delayMs?: number) {
@@ -217,7 +235,7 @@ export function createFxStore(options: FxStoreOptions = {}) {
     }, Math.max(0, delay))
   }
 
-  async function request(endpoint: string, controller: AbortController): Promise<FxSnapshot> {
+  async function request(endpoint: (typeof FX_ENDPOINTS)[number], controller: AbortController): Promise<FxSnapshot> {
     // Deadline 同时覆盖 response body；abort 不被忽略时亦用 race 确保可进入备用源
     let deadline: unknown
     let rejectAbort: (reason: Error) => void
@@ -233,8 +251,10 @@ export function createFxStore(options: FxStoreOptions = {}) {
         reject(new Error("Exchange rate request timed out"))
       }, timeoutMs)
     })
+    // 破缓存串：endpoint 已带 query（base=USD）时补 &，否则追加 ?
+    const sep = endpoint.url.includes("?") ? "&" : "?"
     const operation = (async () => {
-      const response = await fetcher(`${endpoint}?t=${Math.floor(now() / DEFAULT_REFRESH_MS)}`, {
+      const response = await fetcher(`${endpoint.url}${sep}t=${Math.floor(now() / DEFAULT_REFRESH_MS)}`, {
         signal: controller.signal,
         credentials: "omit",
         referrerPolicy: "no-referrer",
@@ -244,7 +264,8 @@ export function createFxStore(options: FxStoreOptions = {}) {
       const length = response.headers.get("content-length")
       if (length && Number(length) > MAX_BODY_BYTES) throw new Error("Exchange rate response is too large")
       const body = await readBody(response, controller.signal)
-      const snapshot = parsePayload(JSON.parse(body), now())
+      const parsed = JSON.parse(body)
+      const snapshot = endpoint.source === "exchangerate-fun" ? parseExchangerateFun(parsed, now()) : parsePayload(parsed, now())
       if (!snapshot) throw new Error("Invalid exchange rate response")
       return snapshot
     })()

@@ -1,10 +1,11 @@
-import { useLayoutEffect, useMemo, useRef, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { ArrowDown, ArrowUp } from "lucide-react"
+import { Tooltip } from "radix-ui"
 
 import { Card } from "@/components/ui/card"
 import type { Node } from "@/lib/api"
 import { bytes, rate } from "@/lib/format"
-import { budgetOf, cny, fxNote, parseRateOverrides } from "@/lib/money"
+import { budgetOf, cny, fxNote, parseRateOverrides, type BudgetItem } from "@/lib/money"
 import { useExchangeRates } from "@/lib/use-exchange-rates"
 import { summarize, type Fleet } from "@/lib/summary"
 import { speedSeriesOf } from "@/lib/speed-history"
@@ -22,20 +23,107 @@ import { speedSeriesOf } from "@/lib/speed-history"
  */
 
 /**
+ * 块上的悬停提示：原生 `title` 换成自己的浮层（radix Tooltip，Globe 的信标提示同一套）——
+ * 样式跟着主题走、出现更快（300ms），长口径说明能换行，不像系统气泡那样闷成一行
+ */
+function Tip({ text, children }: { text?: string; children: ReactNode }) {
+  if (!text) return <>{children}</>
+  return (
+    <Tooltip.Root>
+      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content side="top" sideOffset={6} collisionPadding={8} className="z-50 block max-w-[16rem] rounded-md border bg-popover px-2.5 py-1.5 text-xs leading-relaxed text-popover-foreground shadow-md">
+          {text}
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  )
+}
+
+/**
  * 一块读数：一行小标签、一行大数字、一行小字`mt-auto` 把底部那行压到同排最高那块的
  * 下沿，内容行数不同也对齐
+ *
+ * 两种可交互形态（只给预算那两块用）：
+ *   `onOpen` —— 点击进账单页（账单开着且访客有权时；口径与 App 的 billingVisible 同一份）
+ *     能进账单页的人直接看全量账单，不再挂明细浮层，悬停提示也换成指路的那句
+ *   `detail` —— 悬停 / 聚焦 / 触屏点按弹出逐台明细浮层（没有账单入口时的那副面孔）
+ *     浮层里已带口径行（BudgetDetail 的 note），这时不再挂 Tip，免得两个浮层叠着弹
  */
-function Block({ title, hint, children }: {
+function Block({ title, hint, detail, onOpen, children }: {
   title: string
   /** 悬停提示：口径说明——月度预算与剩余价值那两个数不是一眼能看懂的，得写清楚 */
   hint?: string
+  /** 悬停 / 聚焦 / 触屏点按弹出的明细浮层（见 BudgetDetail） */
+  detail?: ReactNode
+  /** 点击进账单页；挂了它这块就是一枚按钮 */
+  onOpen?: () => void
   children: ReactNode
 }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement | null>(null)
+  const interactive = onOpen !== undefined || detail !== undefined
+  // 开着的浮层：点别处 / Esc 收起（与 NodeCard 那枚浮层同一个做法）
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent) => {
+      const el = e.target
+      if (!(el instanceof HTMLElement) || !ref.current?.contains(el)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false) }
+    document.addEventListener("pointerdown", onDown)
+    document.addEventListener("keydown", onKey)
+    return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey) }
+  }, [open])
   return (
-    <div className="flex min-w-0 flex-col" title={hint}>
-      <div className="truncate text-xs text-muted-foreground">{title}</div>
-      {children}
-    </div>
+    <Tip text={onOpen ? "点击进入账单页，看逐台的月摊与剩余价值明细" : detail ? undefined : hint}>
+      <div
+        ref={ref}
+        className={`relative flex min-w-0 flex-col${interactive ? " cursor-pointer rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" : ""}`}
+        tabIndex={interactive ? 0 : undefined}
+        role={interactive ? "button" : undefined}
+        aria-expanded={detail ? open : undefined}
+        onPointerEnter={detail ? (e) => { if (e.pointerType === "mouse") setOpen(true) } : undefined}
+        onPointerLeave={detail ? (e) => { if (e.pointerType === "mouse") setOpen(false) } : undefined}
+        onFocus={detail ? () => setOpen(true) : undefined}
+        onBlur={detail ? () => setOpen(false) : undefined}
+        onClick={onOpen ?? (detail ? () => setOpen(true) : undefined)}
+        onKeyDown={onOpen ? (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault()
+            onOpen()
+          }
+        } : undefined}
+      >
+        <div className="truncate text-xs text-muted-foreground">{title}</div>
+        {children}
+        {detail !== undefined && open && (
+          // 浮层紧贴块底（不留 mt 空隙）：指针从块移进浮层的路上才不会触发 pointerleave 闪关；
+          // 上限高 + 内部滚动写在 index.css 的 .budget-detail 里——近百行明细也在这一个
+          // 浮层里滚着看，不会把浮层拖出屏幕
+          <span data-budget-detail="" className="budget-detail absolute left-0 top-full z-20 block w-max max-w-[15rem] space-y-1 rounded-md border bg-popover px-2.5 py-2 text-xs shadow-md">
+            {detail}
+          </span>
+        )}
+      </div>
+    </Tip>
+  )
+}
+
+/** 预算卡两枚浮层的内容：逐台明细（金额降序，与 budgetOf 的明细同序）+ 口径行 */
+function BudgetDetail({ head, items, note }: { head: string; items: BudgetItem[]; note: string }) {
+  return (
+    <>
+      {/* 表头带上条数（「各节点月摊 · 87 台」）：浮层能滚了之后，第一眼就知道一共有多少台 */}
+      <span className="block text-muted-foreground">{head} · {items.length} 台</span>
+      {items.map((item, i) => (
+        <span key={i} data-budget-row="" className="flex items-baseline justify-between gap-3">
+          <span className="min-w-0 truncate">{item.name}</span>
+          <span className="tnum shrink-0">≈{cny(item.amount)}</span>
+        </span>
+      ))}
+      <span className="block border-t pt-1 text-muted-foreground">{note}</span>
+    </>
   )
 }
 
@@ -214,7 +302,7 @@ function BusiestBlock({ fleet }: { fleet: Fleet }) {
   )
 }
 
-export function SummaryCards({ nodes, finance = false, searching = false, exchangeRates = "" }: { nodes: Node[]; finance?: boolean; searching?: boolean; exchangeRates?: string }) {
+export function SummaryCards({ nodes, finance = false, searching = false, exchangeRates = "", onOpenBilling }: { nodes: Node[]; finance?: boolean; searching?: boolean; exchangeRates?: string; onOpenBilling?: () => void }) {
   const fleet = summarize(nodes)
   const custom = useMemo(() => parseRateOverrides(exchangeRates), [exchangeRates])
   const needsFx = finance && nodes.some((node) => {
@@ -233,26 +321,43 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
   const remainingCoverage = budget.remainingCount < nodes.length ? `${budget.remainingCount}/${nodes.length}` : `${budget.remainingCount}`
   const showFx = finance && (budget.used.some((code) => code !== "CNY") || budget.skipped.length > 0 || custom.invalid > 0)
   const stateLabel = fx.loading ? "正在更新"
-    : fx.failed ? fx.origin === "builtin" ? "更新失败，使用内置报价" : "更新失败，使用缓存报价"
-    : fx.origin === "builtin" ? "内置报价" : fx.origin === "cache" ? "使用缓存" : "已自动更新"
+    : fx.failed ? fx.origin === "empty" ? "获取失败，暂无汇率" : "获取失败，用缓存汇率"
+    : fx.origin === "empty" ? "正在获取汇率" : fx.origin === "cache" ? "使用缓存" : "已自动更新"
   const oldQuote = Date.now() - Date.parse(`${fx.snapshot.date}T00:00:00Z`) >= 3 * 86_400_000
-  const status = needsFx ? `每日参考价 · ${fx.snapshot.date} · ${stateLabel}${oldQuote ? "（旧报价）" : ""}` : "自定义汇率"
-  const received = fx.origin === "builtin" ? "随主题提供的离线报价" : `获取于 ${new Date(fx.snapshot.fetchedAtMs).toLocaleString("zh-CN")}`
+  const status = needsFx ? `每日参考汇率${fx.snapshot.date ? ` · ${fx.snapshot.date}` : ""} · ${stateLabel}${oldQuote ? "（旧汇率）" : ""}` : "自定义汇率"
+  const received = fx.origin === "empty" ? "等待首次成功获取" : `获取于 ${new Date(fx.snapshot.fetchedAtMs).toLocaleString("zh-CN")}`
+  // 两句口径说明：块的悬停提示（Tip）与明细浮层的尾行同一份，别让两处说岔
+  const monthlyNote = `各节点的价格按计费周期摊到每个月后相加；一次性买断与没填价格的不计入${note}`
+  const remainingNote = `已经付掉、还没用掉的那一段：价格 × 剩余天数 ÷ 周期天数；没填价格、无到期日与一次性买断的不计入${note}`
 
   return (
-    /* 版式：手机起就两列、`lg` 起四列——一行两个省垂直空间（站长要求）；手机上卡片内部并排的
-       读数改竖排、主数字降一档（Big 缩号与 `truncate` 仍兜底），不再把手机压成一列 */
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <Tooltip.Provider delayDuration={300}>
+      {/* 版式：手机起就两列、`lg` 起四列——一行两个省垂直空间（站长要求）；手机上卡片内部并排的
+          读数改竖排、主数字降一档（Big 缩号与 `truncate` 仍兜底），不再把手机压成一列 */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       {finance ? (
         <>
           {/* 第一张卡：月度预算 + 剩余价值 两个数使用同一份汇率折成人民币后相加，
-              所以写「≈」；口径与汇率清单放在悬停提示里（见 lib/money.ts） */}
+              所以写「≈」；口径与汇率清单放在悬停提示里（见 lib/money.ts）
+              ★账单联动（onOpenBilling，App 传的 billingVisible 口径）：账单开着且访客有权，
+              两块读数点下去直接进账单页（那边有全量明细与日历）；没有这个入口时降级成
+              悬停浮层——逐台明细摊开（detail，各有可计的机器才挂） */}
           <Pair>
-            <Block title="月度预算" hint={`各节点的价格按计费周期摊到每个月后相加；一次性买断与没填价格的不计入${note}`}>
+            <Block
+              title="月度预算"
+              hint={monthlyNote}
+              onOpen={onOpenBilling}
+              detail={!onOpenBilling && budget.monthlyItems.length > 0 ? <BudgetDetail head="各节点月摊" items={budget.monthlyItems} note={monthlyNote} /> : undefined}
+            >
               <Big>{budget.monthly === null ? "—" : `≈${cny(budget.monthly)}`}</Big>
               <Foot>{budget.monthlyCount ? `${monthlyCoverage} 台计费` : budget.skipped.length ? "缺少汇率" : "未记录价格"}</Foot>
             </Block>
-            <Block title="剩余价值" hint={`已经付掉、还没用掉的那一段：价格 × 剩余天数 ÷ 周期天数；没填价格、无到期日与一次性买断的不计入${note}`}>
+            <Block
+              title="剩余价值"
+              hint={remainingNote}
+              onOpen={onOpenBilling}
+              detail={!onOpenBilling && budget.remainingItems.length > 0 ? <BudgetDetail head="各节点剩余价值" items={budget.remainingItems} note={remainingNote} /> : undefined}
+            >
               <Big>{budget.remaining === null ? "—" : `≈${cny(budget.remaining)}`}</Big>
               <Foot>{budget.remainingCount ? `${remainingCoverage} 台未到期` : budget.skipped.length ? "缺少汇率" : "无预付到期"}</Foot>
             </Block>
@@ -309,13 +414,14 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
         <div className="col-span-full -mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
           role="status" aria-label="预算汇率状态" data-exchange-rate-status="" data-fx-origin={fx.origin}
           data-fx-failed={fx.failed ? "true" : "false"} data-fx-loading={fx.loading ? "true" : "false"}
-          title={`${note} ${needsFx ? `${received}；数据按日发布，具体付款以成交汇率为准 ` : "使用站点设置中的自定义报价"}`}>
+          title={`${note} ${needsFx ? `${received}；汇率每日更新，仅供参考 ` : "使用站点设置中的自定义汇率"}`}>
           <span>{status}</span>
-          {needsFx && <a href="https://github.com/fawazahmed0/exchange-api" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">汇率来源</a>}
-          {budget.skipped.length > 0 && <span>{budget.skipped.length} 种币种缺少报价，未计入</span>}
+          {needsFx && <a href={fx.snapshot.source === "exchangerate-fun" ? "https://www.exchangerate.fun/" : "https://github.com/fawazahmed0/exchange-api"} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">汇率来源</a>}
+          {budget.skipped.length > 0 && <span>{budget.skipped.length} 种币种缺少汇率，未计入</span>}
           {custom.invalid > 0 && <span>忽略 {custom.invalid} 项无效自定义汇率</span>}
         </div>
       )}
-    </div>
+      </div>
+    </Tooltip.Provider>
   )
 }

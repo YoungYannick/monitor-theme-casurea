@@ -217,6 +217,8 @@ function useTheme(siteMode: ThemeMode) {
 
 export default function App() {
   const config = useThemeConfig()
+  // header / main / footer 三处共用的内容宽度：1280 保底、宽屏放开到后台设的百分比
+  const contentMax = `max(1280px, ${config.pageWidth}%)`
   const [latencyChoice, setLatencyChoice] = useState<{ siteDefault: LatencyStyle; style: LatencyStyle } | null>(null)
   // 配置异步到达或默认档变化时，旧默认下的临时选择失效，所有延迟曲线一起跟随新默认
   const latencyStyle = latencyChoice?.siteDefault === config.latencyStyle ? latencyChoice.style : config.latencyStyle
@@ -257,6 +259,9 @@ export default function App() {
   const browsing = open === null && !showBilling
   // 顶栏搜索框：词与「窄屏那一行展开了没」都留在这儿 —— 进详情页再回来，搜到的还在
   const [query, setQuery] = useState("")
+  // 搜索键盘导航：↑↓ 在**命中列表**里移动的那一格（下标，null = 没选）词一变就清零
+  // （命中的那批换了，之前选到「第几台」已经没有意义）；显示时再按当前命中数夹一次
+  const [cursor, setCursor] = useState<number | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   // 收起搜索（Esc 在空框上按的那一下） **不清词**：收起只是让出顶栏宽度，
   // 不是「别筛了」（收起态会看不见词，所以放大镜会提色、悬停带上词与命中数，见 SearchBox）
@@ -272,6 +277,13 @@ export default function App() {
   const closeSearchRow = () => {
     setSearchOpen(false)
     setQuery("")
+    // 清词的同时把键盘光标也归零（见上面的 cursor）
+    setCursor(null)
+  }
+  // 改词的同时把键盘光标归零：命中的那批换了，「第几台」已经没有意义
+  const changeQuery = (next: string) => {
+    setQuery(next)
+    setCursor(null)
   }
 
   const loadMe = useCallback(() => {
@@ -348,6 +360,19 @@ export default function App() {
   const found = searchNodes(regions.shown, query)
   const listView = { ...view, shown: found.shown }
 
+  // 搜索键盘导航（↑↓ 选、Enter 开）：下标是「命中列表里的第几台」，不变式与清零时机见 cursor 的声明处
+  const moveCursor = (delta: 1 | -1) => {
+    const count = found.shown.length
+    if (count === 0) return
+    setCursor((c) => (c === null ? (delta === 1 ? 0 : count - 1) : (c + delta + count) % count))
+  }
+  const enterCursor = () => {
+    const node = cursor !== null ? found.shown[cursor] : undefined
+    if (node) go(node.id)
+  }
+  // 显示时的当前选中：下标越界（命中数刚变过）就当作没选 —— 读的时候再夹一次，写的时候不用追
+  const cursorId = cursor !== null && cursor < found.shown.length ? found.shown[cursor].id : null
+
   // `/node/{id}` 与 `/billing` 的标签页标题由这里独占（接管逻辑见模块级 ownTitle）
   useEffect(() => {
     if (!me) return
@@ -373,7 +398,7 @@ export default function App() {
         {/* ★ 窄屏横向余量紧：按「站名优先展开、图标自己滑」分 —— 站名 max-w-[55%]、
             搜索钉右边，其余图标装进能横向滑动的条带（与分组标签行同一套做法：
             装不下就滑，不裁字、也不把整页撑宽） */}
-        <div className="mx-auto flex w-full max-w-[max(1280px,85%)] items-center gap-2 px-4 py-3 sm:gap-3 sm:px-6">
+        <div className="mx-auto flex w-full items-center gap-2 px-4 py-3 sm:gap-3 sm:px-6" style={{ maxWidth: contentMax }}>
           {/* 站名就是回列表的路，节点页不需要自己的返回键；前面一枚站标领着 */}
           <button className="tap tap-8 flex max-w-[55%] shrink-0 items-center gap-2.5 font-semibold transition-opacity hover:opacity-70" onClick={() => go(null)}>
             <SiteIcon />
@@ -385,10 +410,12 @@ export default function App() {
           {browsing && (
             <SearchBox
               value={query}
-              onChange={setQuery}
+              onChange={changeQuery}
               onActivate={onSearchActivate}
               onClose={collapseSearch}
               hits={found.hit}
+              onMove={moveCursor}
+              onEnter={enterCursor}
             />
           )}
           {/* ★ 图标条带：装不下就**横向滑动**（与分组标签行同一套做法）
@@ -461,12 +488,12 @@ export default function App() {
         </div>
         {/* 窄屏搜索行：摆成 header 的直接子节点，跟着 sticky 块一起吸顶 */}
         {browsing && searchOpen && (
-          <SearchRow value={query} onChange={setQuery} onClose={closeSearchRow} />
+          <SearchRow value={query} onChange={changeQuery} onClose={closeSearchRow} onMove={moveCursor} onEnter={enterCursor} />
         )}
       </header>
 
-      {/* ★ 内容宽度：1280 封顶、宽屏（≥1506px）放开到 85% —— header 与 footer 同此一条 */}
-      <main className="mx-auto w-full max-w-[max(1280px,85%)] flex-1 space-y-5 px-4 py-4 sm:px-6">
+      {/* ★ 内容宽度：1280 保底、宽屏放开到后台「内容宽度」设置（默认 85%，60–100 可调） —— header 与 footer 同此一条 */}
+      <main className="mx-auto w-full flex-1 space-y-5 px-4 py-4 sm:px-6" style={{ maxWidth: contentMax }}>
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         {showBilling ? (
@@ -507,7 +534,7 @@ export default function App() {
             </div>
           ) : (
             // 骨架列数与真实网格同一套（见下面那张网格的注释），加载完成时不会跳列
-            <div className={`grid gap-3 ${cardStyle === "detailed" || cardStyle === "detailedNoLatency" ? "grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))]" : "grid-cols-[repeat(auto-fill,minmax(min(264px,100%),1fr))]"}`}>
+            <div className={`grid gap-3 ${cardStyle === "detailed" || cardStyle === "detailedNoLatency" ? "grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))]" : cardStyle === "wide" ? "grid-cols-[repeat(auto-fill,minmax(min(450px,100%),1fr))]" : "grid-cols-[repeat(auto-fill,minmax(min(264px,100%),1fr))]"}`}>
               {[0, 1, 2].map((i) => (
                 <Skeleton key={i} className="h-72" />
               ))}
@@ -517,7 +544,7 @@ export default function App() {
           <>
             {/* 概览卡片行：设置里没选它时整个不挂载（不是藏起来），首屏与没有这个功能时一致
                 「月度预算剩余价值版」只是同一行换一副面孔，组件另收一个 finance 开关 */}
-            {hasSummary(config.listTop) && <SummaryCards nodes={found.shown} finance={isBudgetLayout(config.listTop)} searching={found.active} exchangeRates={config.exchangeRates} />}
+            {hasSummary(config.listTop) && <SummaryCards nodes={found.shown} finance={isBudgetLayout(config.listTop)} searching={found.active} exchangeRates={config.exchangeRates} onOpenBilling={billingVisible ? () => goBilling(true) : undefined} />}
             {/* 节点地球：概览卡片之下、列表之上（上游就是这个次序） */}
             {globeOn && (
               <Globe nodes={view.shown} dark={dark} region={regions.current} onRegion={setRegion} onOpen={go} onWarm={warmDetail} />
@@ -526,8 +553,8 @@ export default function App() {
                 搜索那一层排在前面：它是访客刚动手的那层 */}
             {found.active && found.shown.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                当前筛选下没有匹配「{found.query.trim()}」的节点 —— 名称、地区、系统三处都能搜
-                （多个词用空格隔开，要同时命中）；点搜索框里那枚 × 清掉
+                当前筛选下没有匹配「{found.query.trim()}」的节点 —— 名称、备注、地区、系统都能搜
+                （用 | 隔开表示「或」，空格按整体短语匹配）；点搜索框里那枚 × 清掉
               </p>
             ) : globeOn && regions.shown.length === 0 && view.shown.length > 0 ? (
               <p className="text-sm text-muted-foreground">
@@ -538,13 +565,15 @@ export default function App() {
               latencyLines={config.pingLines}
               cardStyle={cardStyle}
               historyDays={me.history_days}
-              remarkPlacement={config.remarkPlacement} />
+              remarkPlacement={config.remarkPlacement}
+              terms={found.terms}
+              cursorId={cursorId} />
           </>
         )}
       </main>
 
       {/* 页脚署名：一行浅色小字居中，链接新标签页打开（地址见 REPO_URL / ENGINE_URL） */}
-      <footer className="mx-auto w-full max-w-[max(1280px,85%)] border-t px-4 pb-5 pt-4 sm:px-6">
+      <footer className="mx-auto w-full border-t px-4 pb-5 pt-4 sm:px-6" style={{ maxWidth: contentMax }}>
         <p className="theme-credit text-center">
           Powered by{" "}
           <a href={ENGINE_URL} target="_blank" rel="noreferrer">
@@ -593,7 +622,7 @@ function useProgressive(total: number, first = 24, step = 12): number {
   return limit
 }
 
-function NodeList({ view, group, onGroup, onOpen, onWarm, latencyLines, cardStyle, historyDays, remarkPlacement }: {
+function NodeList({ view, group, onGroup, onOpen, onWarm, latencyLines, cardStyle, historyDays, remarkPlacement, terms, cursorId }: {
   /** 分组求值的结果：groups / current / shown / tabs / total（App 与概览卡片共用一份） */
   view: ReturnType<typeof groupView>
   /** 原始选中值（null = 全部，"" = 未分组）：只在归一化后回写时用，见下面的 effect */
@@ -604,12 +633,16 @@ function NodeList({ view, group, onGroup, onOpen, onWarm, latencyLines, cardStyl
   onWarm: () => void
   /** 卡片延迟块要显示哪几条线路（ping 任务名，换行分隔）；空串 = 自动 */
   latencyLines: string
-  /** 卡片形态：compact = 一行一台的表格；detailed = 在延迟形态上再加在线时长与元信息；detailedNoLatency = 与 detailed 相同但不含三网延迟；latency 网络单行 + 延迟；classic 网络两行、无延迟；plain 与 classic 版式相同、只换一套视觉处理 */
-  cardStyle: "classic" | "latency" | "detailed" | "detailedNoLatency" | "plain" | "compact"
+  /** 卡片形态：compact = 一行一台的表格；detailed = 在延迟形态上再加在线时长与元信息；detailedNoLatency = 与 detailed 相同但不含三网延迟；wide = 横向宽卡、列数随网格自适应；latency 网络单行 + 延迟；classic 网络两行、无延迟；plain 与 classic 版式相同、只换一套视觉处理 */
+  cardStyle: "classic" | "latency" | "detailed" | "detailedNoLatency" | "wide" | "plain" | "compact"
   /** hub 的历史保留天数：透给「紧凑」形态展开行里那块详情图（时间范围那排按钮按它生成） */
   historyDays?: number
   /** 主题设置里的「备注显示位置」：卡片那一侧要不要摊备注（见 @/lib/site-settings） */
   remarkPlacement: RemarkPlacement
+  /** 搜索命中词：名字里命中的片段描色（见 TextHighlight）；没在搜时是空数组 */
+  terms: string[]
+  /** 搜索键盘光标（↑↓）停在哪台上：对应卡片描边 / 行铺底色，并滚进视野 */
+  cursorId: number | null
 }) {
   const { groups, current, shown, tabs, total, showTabs } = view
   // 首屏先画一屏的量，剩下的分帧补上（见 useProgressive）
@@ -618,6 +651,11 @@ function NodeList({ view, group, onGroup, onOpen, onWarm, latencyLines, cardStyl
   useEffect(() => {
     if (current !== group) onGroup(current)
   }, [current, group, onGroup])
+  // 键盘光标挪出屏幕时把它滚回来：卡片与紧凑行都挂了 data-node-card，一个选择器通吃
+  useEffect(() => {
+    if (cursorId === null) return
+    document.querySelector(`[data-node-card="${cursorId}"]`)?.scrollIntoView({ block: "nearest" })
+  }, [cursorId])
   return (
     <>
       {/* 分组标签行是列表的筛选条 */}
@@ -642,15 +680,15 @@ function NodeList({ view, group, onGroup, onOpen, onWarm, latencyLines, cardStyl
       {total === 0 ? (
         <p className="py-16 text-center text-sm text-muted-foreground">还没有节点</p>
       ) : cardStyle === "compact" ? (
-        <CompactList nodes={list} onOpen={onOpen} onWarm={onWarm} historyDays={historyDays} remarkPlacement={remarkPlacement} />
+        <CompactList nodes={list} onOpen={onOpen} onWarm={onWarm} historyDays={historyDays} remarkPlacement={remarkPlacement} terms={terms} cursorId={cursorId} />
       ) : (
-        // 列数自适应（auto-fill + minmax），不再按断点写死：容器多宽就排多少列——页面
-        // 85% 接管后宽屏自动排到 5、6 列，卡片宽度始终夹在下限与均分之间 下限按形态分：
+        // 列数自适应（auto-fill + minmax），不再按断点写死：容器多宽就排多少列——宽屏
+        // 内容宽度（默认 85%）接管后自动排到 5、6 列，卡片宽度始终夹在下限与均分之间 下限按形态分：
         // 详细两档内容密，320px（1230px 容器仍是 3 列）；其余四档 264px（仍是 4 列）
         // `min(下限,100%)` 兜住 320px 老手机：窄屏退成单列而不是横向溢出
-        <div data-card-style={cardStyle} className={`grid items-start gap-3 ${cardStyle === "detailed" || cardStyle === "detailedNoLatency" ? "grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))]" : "grid-cols-[repeat(auto-fill,minmax(min(264px,100%),1fr))]"}`}>
+        <div data-card-style={cardStyle} className={`grid items-start gap-3 ${cardStyle === "detailed" || cardStyle === "detailedNoLatency" ? "grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))]" : cardStyle === "wide" ? "grid-cols-[repeat(auto-fill,minmax(min(450px,100%),1fr))]" : "grid-cols-[repeat(auto-fill,minmax(min(264px,100%),1fr))]"}`}>
           {list.map((n) => (
-            <NodeCard key={n.id} node={n} onOpen={() => onOpen(n.id)} onWarm={onWarm} latencyLines={latencyLines} cardStyle={cardStyle} remarkPlacement={remarkPlacement} />
+            <NodeCard key={n.id} node={n} onOpen={() => onOpen(n.id)} onWarm={onWarm} latencyLines={latencyLines} cardStyle={cardStyle} remarkPlacement={remarkPlacement} terms={terms} selected={n.id === cursorId} />
           ))}
         </div>
       )}

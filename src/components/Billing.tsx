@@ -317,7 +317,7 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
     return [...codes].sort().map((code) => {
       const rate = rates[code]
       const ok = typeof rate === "number" && Number.isFinite(rate) && rate > 0
-      return { code, text: ok ? `1 ${code} = ${rate.toLocaleString("zh-CN", { maximumSignificantDigits: 4 })} ¥` : `${code} 缺报价` }
+      return { code, text: ok ? `1 ${code} = ${rate.toLocaleString("zh-CN", { maximumSignificantDigits: 4 })} ¥` : `${code} 缺汇率` }
     })
   }, [nodes, target, rates])
 
@@ -399,7 +399,9 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
                   <td className="max-w-[16rem] truncate px-3 py-2 text-sm font-medium">{r.node.name}</td>
                   <td className="whitespace-nowrap px-3 py-2">{statusCell(r)}</td>
                   <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.price)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{r.status === "free" ? "—" : cycleLabel(r.node.billing_cycle)}</td>
+                  {/* 周期列只认后台记录：免费是一次性的也照写「一次性」（周期与价格两回事），
+                      只有真没填周期才占位「—」 */}
+                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{cycleLabel(r.node.billing_cycle) || "—"}</td>
                   <td className="tnum whitespace-nowrap px-3 py-2">{r.node.expires_at ? r.node.expires_at.slice(0, 10) : <span className="text-muted-foreground">—</span>}</td>
                   <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.monthly)}</td>
                   <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.remaining)}</td>
@@ -426,7 +428,7 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
 
       {/* 汇率口径：折合说明 + 用到的币种实际汇率一眼看清 */}
       <p className="text-xs text-muted-foreground" role="status">
-        金额按「1 单位币种 = N 人民币」的参考汇率折算成{currency.name}（报价日期 {fx.snapshot.date}）；缺汇率的机器按原币种显示（≈），免费机器不计入各项合计
+        金额按「1 单位币种 = N 人民币」的参考汇率折算成{currency.name}{fx.snapshot.date ? `（汇率日期 ${fx.snapshot.date}）` : ""}；缺汇率的机器按原币种显示（≈），免费机器不计入各项合计
         {usedFx.length > 0 && (
           <span className="tnum">
             {" "}

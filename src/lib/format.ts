@@ -135,6 +135,17 @@ export const CYCLES: Record<string, string> = {
   once: "一次性",
 }
 
+/** 宽卡底注那行「价格 / 周期」用的短名（一行 16px 的小字里放不下「月付」这种长名） */
+export const CYCLE_SHORT: Record<string, string> = {
+  monthly: "月",
+  quarterly: "季",
+  semiannual: "半年",
+  yearly: "年",
+  biennial: "两年",
+  triennial: "三年",
+  once: "一次性",
+}
+
 // Hoisted out of `clock`: constructing an Intl formatter per call is the largest
 // single cost on the detail page. The zone now resolves once, which only an OS
 // timezone change under an open tab would notice. Both take epoch milliseconds,

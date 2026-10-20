@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, ChevronRight } from "lucide-react"
 
 import { Country, deployed, monthUsage } from "@/components/NodeCard"
 import { DetailLoader } from "@/components/DetailLoader"
+import { TextHighlight } from "@/components/TextHighlight"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { Node } from "@/lib/api"
 import type { RemarkPlacement } from "@/lib/site-settings"
@@ -25,7 +26,8 @@ import { FOREVER, CYCLES, bytes, daysUntil, money, osName, pair, percent, rate }
  *   lg+    加回 到期、价格
  *   xl+    加回 系统（要给名字留全）
  *
- * `table-fixed` 定宽：名称列不写宽度、吃掉余量，其余列写死宽度；宽屏（页面内容 85% 接管后）
+ * `table-fixed` 定宽：名称列不写宽度、吃掉余量，其余列写死宽度；宽屏（内容宽度接管后，
+ * 默认 85%）
  * 给名称列封顶（`W.name`），多出的空间浏览器摊给各列 —— 否则屏幕越宽，名称与系统之间的
  * 空白越大，右侧反而挤 名称过长在这里真的截断，不把表撑出屏幕 `display:none` 的单元格整个
  * 消失，表头与每行列数在各档断点下始终一致
@@ -87,8 +89,8 @@ const MIN = {
   net: 640, cpu: 0, mem: 640, disk: 768, traffic: 0,
 } as const
 const W = {
-  // 名称列只在宽屏封顶：页面 85% 从视口 ~1772px 起接管（表宽开始超过 1280），
-  // 断点取 1792 —— 更早生效会让指定宽度之和超过表宽、把其余列压缩。
+  // 名称列只在宽屏封顶：内容宽度（后台可调，默认 85%）从视口 ~1772px 起接管（表宽开始超过 1280），
+  // 断点取 1792 —— 更早生效会让指定宽度之和超过表宽、把其余列压缩
   // 封顶后多出的空间按各列宽度比例摊开，网速 / 流量这些列跟着松一口气
   name: "min-[1792px]:w-96", os: "w-36", uptime: "w-16", expiry: "w-14", price: "w-28", load: "w-14",
   net: "w-24 lg:w-44", cpu: "w-14 sm:w-16 xl:w-20", mem: "w-14 sm:w-16 xl:w-20",
@@ -136,7 +138,7 @@ function Expanded({ node, span, onOpenDetail, onClose, historyDays, remarkPlacem
   )
 }
 
-function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, remarkPlacement }: {
+function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, remarkPlacement, terms, selected }: {
   node: Node
   span: number
   open: boolean
@@ -148,6 +150,10 @@ function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, re
   historyDays?: number
   /** 「备注显示位置」：展开行那格也算「卡片」那一侧 */
   remarkPlacement?: RemarkPlacement
+  /** 搜索命中词：名字里命中的片段描色（见 TextHighlight） */
+  terms?: string[]
+  /** 搜索键盘光标（↑↓）停在这一行上：铺一层浅底 —— 表格里 outline 的渲染各家不一，底色最稳 */
+  selected?: boolean
 }) {
   const m = node.metrics
   // CPU 是 hub 直接给的百分比；内存、硬盘、流量都要自己按 used/total 算 流量按套餐口径
@@ -159,6 +165,8 @@ function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, re
   const trafficText = node.traffic_limit > 0 ? pair(used, node.traffic_limit) : `${bytes(used)} / ${FOREVER}`
   const traffic = node.traffic_limit > 0 ? percent(used, node.traffic_limit) : null
   const expiry = expiryShort(node)
+  // 已部署但掉线：整行挂离线标记（未接入的不算，见 index.css 的 .offline-row）
+  const offline = !node.online && deployed(node)
   // 续费价与计费周期：与「详细」卡片同一套读法（金额 + 周期），只是压在一个格子里
   const cycle = CYCLES[node.billing_cycle] ?? (node.billing_cycle || null)
 
@@ -168,20 +176,22 @@ function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, re
         role="button"
         aria-expanded={open}
         tabIndex={0}
+        data-node-card={node.id}
+        data-selected={selected ? "1" : undefined}
         onClick={onToggle}
         onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onToggle())}
         onPointerOver={onWarm}
         onFocus={onWarm}
         onTouchStart={onWarm}
-        className={`cursor-pointer outline-none transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 ${open ? "bg-muted/30" : ""}`}
+        className={`cursor-pointer outline-none transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 ${open ? "bg-muted/30" : ""}${offline ? " offline-row" : ""}${selected ? " bg-accent" : ""}`}
       >
         {/* 名称列不写宽度、不居中：定宽表把余量全给它
-            折角 → 国旗 → 名字：折角是「点得进去」的提示，展开时转成朝下 */}
+            折角 → 国旗 → 名字：折角是「点得进去」的提示，展开时转成朝下；搜索命中片段描色 */}
         <td className="px-3 py-2 align-middle">
           <span className="flex min-w-0 items-center gap-2">
             <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground/60 transition-transform ${open ? "rotate-90" : ""}`} />
             <Country node={node} />
-            <span className="truncate text-sm font-medium">{node.name}</span>
+            <span className="truncate text-sm font-medium"><TextHighlight text={node.name} terms={terms} /></span>
           </span>
         </td>
         <td className={`${colCls("os")} ${CELL} ${node.os ? "" : "text-muted-foreground"}`}>
@@ -233,7 +243,7 @@ function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, re
 }
 
 /** 紧凑形态的外壳：一张带边框的表，表头一行 展开的行由 CompactList 统一管开合 */
-export function CompactList({ nodes, onOpen, onWarm, historyDays, remarkPlacement }: { nodes: Node[]; onOpen: (id: number) => void; onWarm?: () => void; historyDays?: number; remarkPlacement?: RemarkPlacement }) {
+export function CompactList({ nodes, onOpen, onWarm, historyDays, remarkPlacement, terms, cursorId }: { nodes: Node[]; onOpen: (id: number) => void; onWarm?: () => void; historyDays?: number; remarkPlacement?: RemarkPlacement; terms?: string[]; cursorId?: number | null }) {
   const span = useSpan()
   // 一次只摊开一行：表格本来就密，同时摊开两块会把上下文冲散
   const [open, setOpen] = useState<number | null>(null)
@@ -268,6 +278,8 @@ export function CompactList({ nodes, onOpen, onWarm, historyDays, remarkPlacemen
               onWarm={onWarm}
               historyDays={historyDays}
               remarkPlacement={remarkPlacement}
+              terms={terms}
+              selected={n.id === cursorId}
             />
           ))}
         </tbody>

@@ -14,9 +14,9 @@ export type ThemeConfig = {
    * 卡片形态：classic = 速率与总量各一行（2×2 四格）、不含延迟；plain = 网络合成一行，
    * 读数窗另换一套视觉处理、不含延迟；latency = 网络一行 + 三网延迟；detailed = 再加
    * 在线时长、价格与到期；detailedNoLatency = 与详细相同但不含三网延迟；
-   * compact = 一行一台的表格（密度最高）默认「详细」
+   * wide = 横向宽卡、列数随网格自适应（六块版式、不含延迟）；compact = 一行一台的表格（密度最高）默认「详细」
    */
-  cardStyle: "classic" | "latency" | "detailed" | "detailedNoLatency" | "plain" | "compact"
+  cardStyle: "classic" | "latency" | "detailed" | "detailedNoLatency" | "plain" | "wide" | "compact"
   /**
    * 列表页顶部显示什么：none = 都不显示；groups = 分组标签行；summary = 概览卡片行（原版）；
    * budget = 概览卡片行（月度预算剩余价值版）；both = 分组标签行 + 原版概览卡片；
@@ -41,6 +41,8 @@ export type ThemeConfig = {
   globeOn: boolean
   /** 站点用哪一档明暗：随系统 / 随北京时间自动 / 固定亮 / 固定暗（访客自己的开关优先） */
   themeMode: ThemeMode
+  /** 页面内容宽度（%）：宽屏生效，1280px 保底；夹在 60–100，默认 85 */
+  pageWidth: number
   /** 每行 CODE=人民币汇率，补充或覆盖自动报价；空串完全使用自动报价 */
   exchangeRates: string
   /**
@@ -67,6 +69,16 @@ export function readThemePreference(storage?: Pick<Storage, "getItem">): "light"
 
 /** 四档的取值与顺序（后台那格下拉、`normalizeConfig` 都照它） */
 export const THEME_MODES: ThemeMode[] = ["system", "auto", "light", "dark"]
+
+/** 内容宽度的合法区间（theme.json 的 min/max 同这一对；超出按没保存过处理） */
+export const PAGE_WIDTH_MIN = 60
+export const PAGE_WIDTH_MAX = 100
+
+/** 收窄 Hub 存回来的宽度：非有限数字回落默认；小数四舍五入（百分比用不着小数） */
+export function pageWidthOf(v: unknown): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) return DEFAULTS.pageWidth
+  return Math.min(PAGE_WIDTH_MAX, Math.max(PAGE_WIDTH_MIN, Math.round(v)))
+}
 
 /** 延迟曲线四档：折线/平滑 × 保留断点/连接断点 */
 export type LatencyStyle = "broken" | "connected" | "smooth" | "connectedSmooth"
@@ -134,6 +146,8 @@ export const DEFAULTS: ThemeConfig = {
   globeOn: false,
   // 明暗默认「随系统」
   themeMode: "system",
+  // 内容宽度默认 85%：1280 保底、宽屏放开到 85%（后台可调 60–100）
+  pageWidth: 85,
   exchangeRates: "",
   // 账单页默认开：顶栏在搜索框右侧多一枚「账单」入口，点了看全站机器的价格与到期
   billingOn: true,
@@ -142,7 +156,7 @@ export const DEFAULTS: ThemeConfig = {
 }
 
 /** 卡片形态的六档，**按界面上要显示的顺序**（顶栏那枚菜单、后台那格下拉都照它排） */
-export const CARD_STYLES: ThemeConfig["cardStyle"][] = ["classic", "plain", "latency", "detailed", "detailedNoLatency", "compact"]
+export const CARD_STYLES: ThemeConfig["cardStyle"][] = ["classic", "plain", "latency", "detailed", "detailedNoLatency", "wide", "compact"]
 
 /**
  * 卡片形态这一档的取值，认不出来就 `null`
@@ -237,6 +251,8 @@ export function normalizeConfig(saved: unknown): ThemeConfig {
     globeOn: typeof s.globeOn === "boolean" ? s.globeOn : DEFAULTS.globeOn,
     // 四档明暗：认不出来的取值（旧版本、手改）回落默认，别让页面卡在一个不存在的档上
     themeMode: THEME_MODES.includes(s.themeMode as ThemeMode) ? (s.themeMode as ThemeMode) : DEFAULTS.themeMode,
+    // 内容宽度：旧站点没有这个键（→ 默认 85%）；非数字/越界由 pageWidthOf 收拢
+    pageWidth: pageWidthOf(s.pageWidth),
     // 不在这里截断行：过长或无效输入由汇率解析器整项拒绝，避免截出错误金额
     exchangeRates: typeof s.exchangeRates === "string" ? s.exchangeRates : DEFAULTS.exchangeRates,
     // 账单开关：只认真布尔；老站点配置没有这个键（→ 默认显示）

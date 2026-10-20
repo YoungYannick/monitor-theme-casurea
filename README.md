@@ -5,8 +5,7 @@
 # Casurea
 
 极简探针 [Monitor](https://github.com/monitor-probe/monitor) 的第三方主题，基于
-[akanotanin/monitor-theme-jikasei](https://github.com/akanotanin/monitor-theme-jikasei)
-二次开发
+[akanotanin/monitor-theme-jikasei](https://github.com/akanotanin/monitor-theme-jikasei) 和 [mghts/monitor-theme-jikasei](https://github.com/mghts/monitor-theme-jikasei) 二次开发
 
 </div>
 

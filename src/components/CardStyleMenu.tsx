@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { Activity, AlignJustify, Check, Grid2x2, LayoutGrid, Rows3, Rows2, Table } from "lucide-react"
+import { Activity, AlignJustify, Check, Columns2, Grid2x2, LayoutGrid, Rows3, Rows2, Table } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import type { ThemeConfig } from "@/lib/site-settings"
@@ -24,6 +24,7 @@ const STYLES: { value: CardStyle; label: string; hint: string; Icon: typeof Grid
   { value: "latency", label: "延迟", hint: "网络一行，下方带三网延迟", Icon: Activity },
   { value: "detailed", label: "详细", hint: "在延迟之上再加在线时长、价格与到期", Icon: AlignJustify },
   { value: "detailedNoLatency", label: "详细·无延迟", hint: "与详细相同，但不含三网延迟", Icon: Rows2 },
+  { value: "wide", label: "宽卡", hint: "横向大卡，六块版式、不含延迟，列数随容器自适应", Icon: Columns2 },
   { value: "compact", label: "紧凑", hint: "一行一台的表格，密度最高", Icon: Table },
 ]
 
