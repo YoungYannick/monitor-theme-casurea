@@ -19,7 +19,7 @@ export type ThemeConfig = {
   cardStyle: "classic" | "latency" | "detailed" | "detailedNoLatency" | "plain" | "wide" | "compact"
   /**
    * 列表页顶部显示什么：none = 都不显示；groups = 分组标签行；summary = 概览卡片行（原版）；
-   * budget = 概览卡片行（月度预算剩余价值版）；both = 分组标签行 + 原版概览卡片；
+   * budget = 概览卡片行（价值版：剩余总价值 + 月均总支出）；both = 分组标签行 + 原版概览卡片；
    * bothBudget = 分组标签行 + 预算版概览卡片
    *
    * 带标签行的两档里，**概览卡片算的是当前分组**（与下面的列表同一批机器，见 api.ts 的
@@ -211,7 +211,7 @@ export function hasSummary(top: ThemeConfig["listTop"]): boolean {
 }
 
 /**
- * 概览卡片排成「月度预算剩余价值版」：第一张卡是月度预算 + 剩余价值，第二张卡是节点 + 最忙节点
+ * 概览卡片排成「价值版」：第一张卡是剩余总价值 + 月均总支出，第二张卡是节点 + 最忙节点
  * （照站长给的参考图，后一张的两块读数分居卡片两端） 原版则是四张各一块读数
  */
 export function isBudgetLayout(top: ThemeConfig["listTop"]): boolean {

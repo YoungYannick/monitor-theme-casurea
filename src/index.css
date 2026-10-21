@@ -181,7 +181,7 @@
 /* Tabular figures keep live numbers from shifting as they update. */
 .tnum { font-variant-numeric: tabular-nums; }
 
-/* 预算明细浮层（Summary 的「月度预算 / 剩余价值」逐台明细）：机器多了以后浮层会长到
+/* 预算明细浮层（Summary 的「月均总支出 / 剩余总价值」逐台明细）：机器多了以后浮层会长到
    几十行，上限高 + 内部滚动——近百行明细也在这一个浮层里滚着看，不会拖出屏幕 */
 .budget-detail { max-height: min(24rem, 60vh); overflow-y: auto; }
 

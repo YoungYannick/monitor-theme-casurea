@@ -14,7 +14,7 @@ import { speedSeriesOf } from "@/lib/speed-history"
 /**
  * 列表页顶上那行概览卡片，两副面孔（主题设置的「列表页顶部」里选）：
  *   原版（summary / both）——四张卡片各一块读数：节点 / 最忙节点 / 今日流量 / 实时网速
- *   月度预算剩余价值版（budget / bothBudget）——前两张各排两块读数（月度预算 + 剩余价值、
+ *   月度预算剩余价值版（budget / bothBudget）——前两张各排两块读数（剩余总价值 + 月均总支出、
  *   节点 + 最忙节点），后两张两副面孔一样
  *
  * 第四张下面那条走势线画访客打开页面后自己攒下的实时速率（`speedHistory`，约 2 分钟）：
@@ -40,7 +40,7 @@ import { speedSeriesOf } from "@/lib/speed-history"
  */
 function Block({ title, hint, detail, onOpen, children }: {
   title: string
-  /** 悬停提示：口径说明——月度预算与剩余价值那两个数不是一眼能看懂的，得写清楚 */
+  /** 悬停提示：口径说明——月均总支出与剩余总价值那两个数不是一眼能看懂的，得写清楚 */
   hint?: string
   /** 悬停 / 聚焦 / 触屏点按弹出的明细浮层（见 BudgetDetail） */
   detail?: ReactNode
@@ -64,7 +64,7 @@ function Block({ title, hint, detail, onOpen, children }: {
     return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey) }
   }, [open])
   return (
-    <InfoTooltip text={onOpen ? "点击进入账单页，看逐台的月摊与剩余价值明细" : detail ? undefined : hint}>
+    <InfoTooltip text={onOpen ? "点击进入账单页，看逐台的月均与剩余价值明细" : detail ? undefined : hint}>
       <div
         ref={ref}
         className={`relative flex min-w-0 flex-col${interactive ? " cursor-pointer rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" : ""}`}
@@ -331,29 +331,29 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       {finance ? (
         <>
-          {/* 第一张卡：月度预算 + 剩余价值 两个数使用同一份汇率折成人民币后相加，
+          {/* 第一张卡：剩余总价值 + 月均总支出 两个数使用同一份汇率折成人民币后相加，
               所以写「≈」；口径与汇率清单放在悬停提示里（见 lib/money.ts）
               ★账单联动（onOpenBilling，App 传的 billingVisible 口径）：账单开着且访客有权，
               两块读数点下去直接进账单页（那边有全量明细与日历）；没有这个入口时降级成
               悬停浮层——逐台明细摊开（detail，各有可计的机器才挂） */}
           <Pair>
             <Block
-              title="月度预算"
-              hint={monthlyNote}
-              onOpen={onOpenBilling}
-              detail={!onOpenBilling && budget.monthlyItems.length > 0 ? <BudgetDetail head="各节点月摊" items={budget.monthlyItems} note={monthlyNote} /> : undefined}
-            >
-              <Big>{budget.monthly === null ? "—" : `≈${cny(budget.monthly)}`}</Big>
-              <Foot>{budget.monthlyCount ? `${monthlyCoverage} 台计费` : budget.skipped.length ? "缺少汇率" : "未记录价格"}</Foot>
-            </Block>
-            <Block
-              title="剩余价值"
+              title="剩余总价值"
               hint={remainingNote}
               onOpen={onOpenBilling}
               detail={!onOpenBilling && budget.remainingItems.length > 0 ? <BudgetDetail head="各节点剩余价值" items={budget.remainingItems} note={remainingNote} /> : undefined}
             >
               <Big>{budget.remaining === null ? "—" : `≈${cny(budget.remaining)}`}</Big>
               <Foot>{notExpired > 0 ? `${remainingCoverage} 台未到期` : budget.skipped.length ? "缺少汇率" : "无预付到期"}</Foot>
+            </Block>
+            <Block
+              title="月均总支出"
+              hint={monthlyNote}
+              onOpen={onOpenBilling}
+              detail={!onOpenBilling && budget.monthlyItems.length > 0 ? <BudgetDetail head="各节点月摊" items={budget.monthlyItems} note={monthlyNote} /> : undefined}
+            >
+              <Big>{budget.monthly === null ? "—" : `≈${cny(budget.monthly)}`}</Big>
+              <Foot>{budget.monthlyCount ? `${monthlyCoverage} 台计费` : budget.skipped.length ? "缺少汇率" : "未记录价格"}</Foot>
             </Block>
           </Pair>
 

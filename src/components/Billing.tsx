@@ -467,11 +467,10 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
   const monthlyTotal = rows.reduce((sum, r) => sum + (r.monthly ?? 0), 0)
   const remainingTotal = rows.reduce((sum, r) => sum + (r.remaining ?? 0), 0)
   const expired = rows.filter((r) => r.status === "expired").length
-  // 「未到期」含「即将到期」：都是周期付费且还没过期的机器；0 就写 0，不用「—」这种含糊占位
-  const active = rows.filter((r) => r.status === "active" || r.status === "expiring").length
-  // 无到期日（`expires_in` 与 `expires_at` 都没有）的机器：与未到期/已到期合计正好等于总数
-  const noexpiry = rows.filter((r) => r.status === "noexpiry").length
-  const dueSoon = rows.filter((r) => r.status === "expiring" && r.daysLeft !== null && r.daysLeft <= 7).length
+  // 未到期含无到期日的机器（长期持有，同首页口径）；0 就写 0，不用「—」这种含糊占位
+  const active = rows.filter((r) => r.status !== "expired").length
+  // 30 天内到期（含今天）的机器，与日历右侧分段清单同一口径
+  const expiring = rows.filter((r) => r.status === "expiring").length
 
   // 日历选中日：表格只列当天到期的机器；null 为不筛
   const [picked, setPicked] = useState<string | null>(null)
@@ -512,15 +511,15 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
         </label>
       </div>
 
-      {/* 汇总：剩余总价值、月均总支出两张金额卡在前；台数四张（未到期/已到期/无期限合计等于总数，未到期卡悬浮提示 7 日内到期数）
-          按可用时间算的口径就是剩余价值 */}
+      {/* 汇总：剩余总价值、月均总支出两张金额卡在前；台数四张——未到期（含无到期日的长期
+          机器，同首页口径）、即将到期（30 天内）、已到期，三张合计正好等于节点总数 */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         {statCard("剩余总价值", moneyOf(remainingTotal, currency.code), "已付、还没用掉的那一段（已到期与无到期日不计入）")}
         {statCard("月均总支出", moneyOf(monthlyTotal, currency.code), "各节点价格按计费周期摊到每月后求和（免费机器不计入）")}
         {statCard("节点总数", `${rows.length} 台`)}
-        {statCard("未到期", `${active} 台`, dueSoon > 0 ? `其中 ${dueSoon} 台 7 天内到期` : undefined)}
+        {statCard("未到期", `${active} 台`, "含无到期日的机器（长期持有）")}
+        {statCard("即将到期", `${expiring} 台`, "30 天内到期（含今天），与日历清单同一口径")}
         {statCard("已到期", `${expired} 台`)}
-        {statCard("无期限", `${noexpiry} 台`, "没填到期日的机器（多为免费或一次性买断）")}
       </div>
 
       <BillingCalendar nodes={nodes} rows={rows} currencyCode={currency.code} picked={picked} onPick={setPicked} />
