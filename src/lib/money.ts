@@ -11,11 +11,12 @@ import { daysUntil } from "./format.ts"
  *
  * 口径：
  *   月均总支出 = Σ 价格 × 汇率 ÷ 周期月数——把每个节点的账摊到一个月上再加起来
- *     （年付 $120 就是每月 $10；一个月按 30 天、一年按 365 天，两把尺子都写在 CYCLE 里）
- *     hub 的自定义 `<n>m` 支持 1–1200 月；已有命名周期对应的月数沿用原天数，其他每月按 30 天
+ *     （年付 $120 就是每月 $10）hub 的自定义 `<n>m` 支持 1–1200 月
  *     一次性买断（`once`）没有「每月」可言，不计入；价格没填（0/空）的不计
  *   剩余总价值 = Σ 价格 × 汇率 × (剩余天数 ÷ 周期天数)——已经付掉、还没用掉的那一段
- *     线性折算不封顶：到期日比一个周期远说明一次付了多期（月付剩 43 天＝付了约 1.43 期）
+ *     周期天数取到期日倒推一个周期的实际日历天数（见 cycleDaysOf），
+ *     剩余天数铺满一个周期时剩余价值正好等于一期付款
+ *     线性折算不封顶：到期日比一个周期远说明一次付了多期
  *     剩余天数取 hub 算好的 `expires_in`（它按 hub 的日历算，在线节点还会顺延到期日），
  *     旧 hub 没有这个字段时才退回按 `expires_at` 自己数
  *     无到期日（`expires_in` 与 `expires_at` 都没有）的机器没有「剩多少价值」可说，
@@ -23,35 +24,43 @@ import { daysUntil } from "./format.ts"
  *   没写周期（空串 / 不认识的取值，老数据或手填）按最常见的**月付**算——它读起来
  *   最接近「这台机器一个月花多少」，也不会让那个节点整台从合计里消失
  */
-const CYCLE: Record<string, { months: number; days: number }> = {
-  monthly: { months: 1, days: 30 },
-  quarterly: { months: 3, days: 90 },
-  semiannual: { months: 6, days: 180 },
-  yearly: { months: 12, days: 365 },
-  biennial: { months: 24, days: 730 },
-  triennial: { months: 36, days: 1095 },
-  // 一次性买断：没有「每月」也没有「剩多少天」，两块都不计入
-  once: { months: 0, days: 0 },
+/** 命名周期与一次性对应的月数；`<n>m` 由正则解析，不进这张表 */
+const CYCLE_MONTHS: Record<string, number> = {
+  monthly: 1,
+  quarterly: 3,
+  semiannual: 6,
+  yearly: 12,
+  biennial: 24,
+  triennial: 36,
+  once: 0,
 }
 
-function cycleOf(cycle: string): { months: number; days: number } {
-  if (Object.hasOwn(CYCLE, cycle)) return CYCLE[cycle]
-  const match = /^(\d+)m$/.exec(cycle)
-  const months = match && match[0] === cycle ? Number(match[1]) : NaN
-  // 与 hub 的有效范围一致；无效或旧数据仍按月付，不让节点从预算中消失
-  if (!Number.isInteger(months) || months < 1 || months > 1200) return CYCLE.monthly
-  // `12m` 与 `yearly` 等别名必须使用同一把天数尺子，而不是退回 360 天
-  return Object.values(CYCLE).find((period) => period.months === months) ?? { months, days: months * 30 }
-}
-
-/** 实际周期是几「月份」没写周期（老数据 / 手填）按月付——最常见的记法 */
+/** 周期的月数；没写或认不出（老数据 / 手填）按月付，不让节点从合计里消失 */
 export function cycleMonthsOf(cycle: string): number {
-  return cycleOf(cycle).months
+  if (Object.hasOwn(CYCLE_MONTHS, cycle)) return CYCLE_MONTHS[cycle]
+  const n = Number(/^(\d+)m$/.exec(cycle)?.[1])
+  return Number.isInteger(n) && n >= 1 && n <= 1200 ? n : 1
 }
 
-/** 实际周期是几天 用户的「剩余天数」按这把尺子折 */
-export function cycleDaysOf(cycle: string): number {
-  return cycleOf(cycle).days
+/**
+ * 一个计费周期的实际天数：从到期日倒推一个周期得到起点（整年的按年倒推，其余按月），
+ * 起点到到期日的日历天数。倒推出的日子不存在（月末、闰日）时起点回退到当月最后一天。
+ * 一次性返回 0；无到期日或日期无效时退回月数 × 30 的平均尺。
+ */
+export function cycleDaysOf(cycle: string, expiresAt: string | null | undefined): number {
+  const months = cycleMonthsOf(cycle)
+  if (months <= 0) return 0
+  const fallback = months * 30
+  if (!expiresAt) return fallback
+  const end = new Date(`${expiresAt.slice(0, 10)}T00:00:00`)
+  if (Number.isNaN(end.getTime())) return fallback
+  const endMs = end.getTime()
+  const day = end.getDate()
+  if (months % 12 === 0) end.setFullYear(end.getFullYear() - months / 12)
+  else end.setMonth(end.getMonth() - months)
+  if (end.getDate() !== day) end.setDate(0)
+  const span = Math.round((endMs - end.getTime()) / 86_400_000)
+  return span > 0 ? span : fallback
 }
 
 /**
@@ -152,7 +161,7 @@ export function budgetOf(nodes: Node[], rates: Record<string, number> = FX_CNY):
     }
     used.add(currency)
     const months = cycleMonthsOf(node.billing_cycle)
-    const days = cycleDaysOf(node.billing_cycle)
+    const days = cycleDaysOf(node.billing_cycle, node.expires_at)
     if (months > 0) {
       const per = (node.price * fx) / months
       monthly += per

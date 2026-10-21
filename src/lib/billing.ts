@@ -102,7 +102,7 @@ export function billingRowOf(node: Node, target: string, rates: Record<string, n
   }
 
   const months = cycleMonthsOf(node.billing_cycle)
-  const days = cycleDaysOf(node.billing_cycle)
+  const days = cycleDaysOf(node.billing_cycle, node.expires_at)
   const left = daysLeftOf(node)
   return {
     node,
