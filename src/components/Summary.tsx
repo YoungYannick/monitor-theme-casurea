@@ -5,7 +5,7 @@ import { Tooltip } from "radix-ui"
 import { Card } from "@/components/ui/card"
 import { InfoTooltip } from "@/components/InfoTooltip"
 import type { Node } from "@/lib/api"
-import { bytes, rate } from "@/lib/format"
+import { bytes, daysUntil, rate } from "@/lib/format"
 import { budgetOf, cny, fxNote, parseRateOverrides, type BudgetItem } from "@/lib/money"
 import { useExchangeRates } from "@/lib/use-exchange-rates"
 import { summarize, type Fleet } from "@/lib/summary"
@@ -305,8 +305,14 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
   const series = speedSeriesOf(nodes)
   // 折算说明：只列真的用到过的币种——各站的账混着 USD / EUR / CNY 记，合起来必须说明口径
   const note = fxNote(budget.used, budget.skipped, { rates, date: fx.snapshot.date, custom: custom.rates, label: "按参考汇率折算" })
-  const monthlyCoverage = budget.monthlyCount < nodes.length ? `${budget.monthlyCount}/${nodes.length}` : `${budget.monthlyCount}`
-  const remainingCoverage = budget.remainingCount < nodes.length ? `${budget.remainingCount}/${nodes.length}` : `${budget.remainingCount}`
+  // 覆盖率始终写分数 N/M，分母是全部节点数：免费机器不计月账，但仍计入台数
+  const monthlyCoverage = `${budget.monthlyCount}/${nodes.length}`
+  // 「未到期」的分子：一次性买断与无到期日的机器属长期持有，也算未到期；分子只剔已过期的
+  const notExpired = nodes.filter((n) => {
+    const left = typeof n.expires_in === "number" ? n.expires_in : daysUntil(n.expires_at)
+    return left === null || left >= 0
+  }).length
+  const remainingCoverage = `${notExpired}/${nodes.length}`
   const showFx = finance && (budget.used.some((code) => code !== "CNY") || budget.skipped.length > 0 || custom.invalid > 0)
   const stateLabel = fx.loading ? "正在更新"
     : fx.failed ? fx.origin === "empty" ? "获取失败，暂无汇率" : "获取失败，用缓存汇率"
@@ -347,7 +353,7 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
               detail={!onOpenBilling && budget.remainingItems.length > 0 ? <BudgetDetail head="各节点剩余价值" items={budget.remainingItems} note={remainingNote} /> : undefined}
             >
               <Big>{budget.remaining === null ? "—" : `≈${cny(budget.remaining)}`}</Big>
-              <Foot>{budget.remainingCount ? `${remainingCoverage} 台未到期` : budget.skipped.length ? "缺少汇率" : "无预付到期"}</Foot>
+              <Foot>{notExpired > 0 ? `${remainingCoverage} 台未到期` : budget.skipped.length ? "缺少汇率" : "无预付到期"}</Foot>
             </Block>
           </Pair>
 
