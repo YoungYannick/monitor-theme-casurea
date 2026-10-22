@@ -595,7 +595,6 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
                 type="checkbox"
                 checked={smooth}
                 onChange={(e) => setSmooth(e.target.checked)}
-                className="accent-foreground"
               />
               削峰
             </label>
@@ -605,7 +604,6 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
                 data-latency-option="connect-gaps"
                 checked={connectGaps}
                 onChange={(e) => chooseLatencyStyle(latencyStyleFromOptions({ connectGaps: e.target.checked, smooth: smoothLines }))}
-                className="accent-foreground"
               />
               连接断点
             </label>
@@ -615,7 +613,6 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
                 data-latency-option="smooth-lines"
                 checked={smoothLines}
                 onChange={(e) => chooseLatencyStyle(latencyStyleFromOptions({ connectGaps, smooth: e.target.checked }))}
-                className="accent-foreground"
               />
               平滑曲线
             </label>

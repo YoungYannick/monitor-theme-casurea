@@ -182,7 +182,7 @@ function useTheme(siteMode: ThemeMode) {
     for (const old of head.querySelectorAll('meta[name="theme-color"]')) old.remove()
     const meta = document.createElement("meta")
     meta.name = "theme-color"
-    let color = dark ? "#0d0c0a" : "#fafafa"
+    let color = dark ? "#000000" : "#fafafa"
     const probe = document.createElement("canvas")
     probe.width = probe.height = 1
     const ctx = probe.getContext("2d")
@@ -400,7 +400,7 @@ export default function App() {
             装不下就滑，不裁字、也不把整页撑宽） */}
         <div className="mx-auto flex w-full items-center gap-2 px-4 py-3 sm:gap-3 sm:px-6" style={{ maxWidth: contentMax }}>
           {/* 站名就是回列表的路，节点页不需要自己的返回键；前面一枚站标领着 */}
-          <button className="tap tap-8 flex max-w-[55%] shrink-0 items-center gap-2.5 font-semibold transition-opacity hover:opacity-70" onClick={() => go(null)}>
+          <button className="tap tap-8 flex max-w-[55%] shrink-0 items-center gap-2.5 font-semibold" onClick={() => go(null)}>
             <SiteIcon />
             <span className="truncate">{me.site_name || "Monitor"}</span>
           </button>
