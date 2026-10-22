@@ -590,15 +590,20 @@ export default function App() {
   )
 }
 
-/** 顶栏的圆形站标：就是站点图标本身，取页面上 `<link rel="icon">` 的地址
- *  （hub 1.4.0 起由面板管理，换图时版本号变、浏览器自己重新取）取不到就不占位 */
+/** 顶栏的圆形站标：优先取 /favicon.ico（上传站点图标后由 hub 在此返回，保留透明背景）；
+ *  apple-touch-icon 那份按 iOS 规范垫了不透明底色，只在 ico 拿不到时兜底；都取不到就不占位 */
 function SiteIcon() {
-  const [href] = useState(() => document.querySelector('link[rel~="icon"]')?.getAttribute("href") || "/apple-touch-icon.png")
+  const [src, setSrc] = useState(() => document.querySelector('link[rel~="icon"]')?.getAttribute("href") || "/favicon.ico")
   const [broken, setBroken] = useState(false)
   if (broken) return null
   return (
-    <span className="size-8 shrink-0 overflow-hidden rounded-full bg-muted ring-1 ring-border/60">
-      <img src={href} alt="" className="size-full object-cover" onError={() => setBroken(true)} />
+    <span className="size-8 shrink-0 overflow-hidden rounded-full ring-1 ring-border/60">
+      <img
+        src={src}
+        alt=""
+        className="size-full object-cover"
+        onError={() => (src !== "/apple-touch-icon.png" ? setSrc("/apple-touch-icon.png") : setBroken(true))}
+      />
     </span>
   )
 }
