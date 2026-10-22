@@ -500,7 +500,7 @@ export default function App() {
           // 路由直达但没权限（billingOn 关了 / 仅管理员而没登录）：给一枚正经 404，
           // 不亮出内容也不假装是列表页
           billingVisible ? (
-            <Billing nodes={nodes ?? []} exchangeRates={config.exchangeRates} />
+            <Billing nodes={nodes ?? []} exchangeRates={config.exchangeRates} excludeTag={config.billingExcludeOn ? config.billingExcludeTag : ""} />
           ) : (
             <div className="grid min-h-[60vh] place-items-center">
               <div className="space-y-3 text-center">
@@ -544,7 +544,7 @@ export default function App() {
           <>
             {/* 概览卡片行：设置里没选它时整个不挂载（不是藏起来），首屏与没有这个功能时一致
                 「价值版」只是同一行换一副面孔，组件另收一个 finance 开关 */}
-            {hasSummary(config.listTop) && <SummaryCards nodes={found.shown} finance={isBudgetLayout(config.listTop)} searching={found.active} exchangeRates={config.exchangeRates} onOpenBilling={billingVisible ? () => goBilling(true) : undefined} />}
+            {hasSummary(config.listTop) && <SummaryCards nodes={found.shown} finance={isBudgetLayout(config.listTop)} searching={found.active} exchangeRates={config.exchangeRates} excludeTag={config.billingExcludeOn ? config.billingExcludeTag : ""} onOpenBilling={billingVisible ? () => goBilling(true) : undefined} />}
             {/* 节点地球：概览卡片之下、列表之上（上游就是这个次序） */}
             {globeOn && (
               <Globe nodes={view.shown} dark={dark} region={regions.current} onRegion={setRegion} onOpen={go} onWarm={warmDetail} />

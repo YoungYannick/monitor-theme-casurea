@@ -52,6 +52,10 @@ export type ThemeConfig = {
   billingOn: boolean
   /** 账单页给谁看：所有人，或仅管理员（站长登录状态，见 /api/me 的 authed） */
   billingAccess: "everyone" | "admin"
+  /** 账单排除开关：开启且排除依据非空时，公开备注命中该依据的机器不计入两处金额合计 */
+  billingExcludeOn: boolean
+  /** 排除依据：公开备注按分号拆分后其中一项与它完全相同（区分大小写）即命中 */
+  billingExcludeTag: string
 }
 
 /** 四档明暗：`system` 随系统、`auto` 按北京时间自动、`light`/`dark` 固定 */
@@ -153,6 +157,9 @@ export const DEFAULTS: ThemeConfig = {
   billingOn: true,
   // 默认所有人可看；要只给站长自己看就设 admin
   billingAccess: "everyone",
+  // 账单排除默认关：所有机器照常计入合计
+  billingExcludeOn: false,
+  billingExcludeTag: "",
 }
 
 /** 卡片形态的六档，**按界面上要显示的顺序**（顶栏那枚菜单、后台那格下拉都照它排） */
@@ -259,6 +266,9 @@ export function normalizeConfig(saved: unknown): ThemeConfig {
     billingOn: typeof s.billingOn === "boolean" ? s.billingOn : DEFAULTS.billingOn,
     // 账单权限：只认 everyone / admin 两个值，其余（旧版本、手改）回落默认
     billingAccess: s.billingAccess === "admin" ? "admin" : "everyone",
+    // 账单排除：开关只认真布尔；依据只认真字符串（trim 后空＝没有依据，等于不排除）
+    billingExcludeOn: typeof s.billingExcludeOn === "boolean" ? s.billingExcludeOn : DEFAULTS.billingExcludeOn,
+    billingExcludeTag: typeof s.billingExcludeTag === "string" ? s.billingExcludeTag.trim() : DEFAULTS.billingExcludeTag,
   }
 }
 

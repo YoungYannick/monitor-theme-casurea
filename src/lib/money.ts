@@ -2,6 +2,7 @@ import type { Node } from "@/lib/api"
 // 相对路径（而不是 `@/lib/format`）：这个文件要能被 `node src/lib/money.test.ts`
 // 直接跑（见 money.test.ts），而 Node 不认 tsconfig 里的 `@` 别名
 import { daysUntil } from "./format.ts"
+import { splitTags } from "./notes.ts"
 
 /**
  * 概览卡片「预算版」那两块读数：剩余总价值、月均总支出（与账单页统计卡同名）
@@ -140,7 +141,17 @@ export type BudgetItem = {
   amount: number
 }
 
-export function budgetOf(nodes: Node[], rates: Record<string, number> = FX_CNY): Budget {
+/**
+ * 排除依据是否命中这台机器：公开备注按逗号/分号（均含全角）拆分后，
+ * 其中一项与依据**完全相同**（trim 后比较，区分大小写）才算命中；依据为空永不命中
+ */
+export function isExcludedByTag(node: { public_remark?: string | null }, tag: string): boolean {
+  const key = tag.trim()
+  if (!key) return false
+  return splitTags(node.public_remark ?? "").includes(key)
+}
+
+export function budgetOf(nodes: Node[], rates: Record<string, number> = FX_CNY, excludeTag = ""): Budget {
   let monthly = 0
   let remaining = 0
   let monthlyCount = 0
@@ -151,6 +162,8 @@ export function budgetOf(nodes: Node[], rates: Record<string, number> = FX_CNY):
   const remainingItems: BudgetItem[] = []
 
   for (const node of nodes) {
+    // 命中排除依据的机器不进合计（被排除机器：填了价格但不想计入账单）
+    if (isExcludedByTag(node, excludeTag)) continue
     // 没填价格（0 / 空）＝这台不计账，不是「花 0 元」
     if (!Number.isFinite(node.price) || !(node.price > 0) || node.billing_cycle === "once") continue
     const currency = (node.currency || "").trim().toUpperCase()

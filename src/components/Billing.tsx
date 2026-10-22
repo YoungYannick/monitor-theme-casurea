@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Tooltip } from "radix-ui"
-import { ArrowDown, ArrowUpDown, ArrowUp, ChevronLeft, ChevronRight } from "lucide-react"
+import { ArrowDown, ArrowUpDown, ArrowUp, ChevronLeft, ChevronRight, Info } from "lucide-react"
 
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -9,7 +9,7 @@ import { Country, RemarkChips } from "@/components/NodeCard"
 import type { Node } from "@/lib/api"
 import { BILLING_CURRENCIES, billingRowOf, moneyOf, type BillingCurrency, type BillingRow, type BillingStatus } from "@/lib/billing"
 import { CYCLES, bytes, cpuName, daysUntil, money, osName } from "@/lib/format"
-import { cycleMonthsOf, parseRateOverrides } from "@/lib/money"
+import { cycleMonthsOf, isExcludedByTag, parseRateOverrides } from "@/lib/money"
 import { regionOf } from "@/lib/globe"
 import { remarkChips } from "@/lib/notes"
 import { COUNTRY_NAMES } from "@/lib/world"
@@ -426,7 +426,7 @@ function BillingCalendar({
   )
 }
 
-export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchangeRates?: string }) {
+export function Billing({ nodes, exchangeRates = "", excludeTag = "" }: { nodes: Node[]; exchangeRates?: string; excludeTag?: string }) {
   const [target, setTarget] = useState(readCurrency)
   const currency: BillingCurrency = BILLING_CURRENCIES.find((c) => c.code === target) ?? BILLING_CURRENCIES[0]
 
@@ -439,6 +439,8 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
   const rates = useMemo<Record<string, number>>(() => ({ ...fx.snapshot.rates, ...custom.rates, CNY: 1 }), [fx.snapshot.rates, custom.rates])
 
   const rows = useMemo(() => nodes.map((n) => billingRowOf(n, target, rates)), [nodes, target, rates])
+  // 命中排除依据的机器（被排除机器）：底部列表照常列出，但两处金额合计不计入
+  const excluded = useMemo(() => new Set(nodes.filter((n) => isExcludedByTag(n, excludeTag)).map((n) => n.id)), [nodes, excludeTag])
 
   // 实际参与折算的外币及其有效汇率（1 单位 = N 人民币）；缺报价的也列出，和表里的 ≈ 对得上
   const usedFx = useMemo(() => {
@@ -464,8 +466,8 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
     }
   }
 
-  const monthlyTotal = rows.reduce((sum, r) => sum + (r.monthly ?? 0), 0)
-  const remainingTotal = rows.reduce((sum, r) => sum + (r.remaining ?? 0), 0)
+  const monthlyTotal = rows.filter((r) => !excluded.has(r.node.id)).reduce((sum, r) => sum + (r.monthly ?? 0), 0)
+  const remainingTotal = rows.filter((r) => !excluded.has(r.node.id)).reduce((sum, r) => sum + (r.remaining ?? 0), 0)
   const expired = rows.filter((r) => r.status === "expired").length
   // 未到期含无到期日的机器（长期持有，同首页口径）；0 就写 0，不用「—」这种含糊占位
   const active = rows.filter((r) => r.status !== "expired").length
@@ -568,7 +570,19 @@ export function Billing({ nodes, exchangeRates = "" }: { nodes: Node[]; exchange
                     )}
                   </td>
                   <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.monthly, "—")}</td>
-                  <td className="tnum whitespace-nowrap px-3 py-2 text-right">{priceText(r, r.remaining, "—")}</td>
+                  <td className="tnum whitespace-nowrap px-3 py-2 text-right">
+                    {excluded.has(r.node.id) ? (
+                      // 被排除的机器：金额照算，但挂一枚 Info 标记，悬浮说明不计入合计的原因
+                      <InfoTooltip text={`已排除（公开备注含「${excludeTag}」）：不计入剩余总价值与月均总支出`}>
+                        <span className="inline-flex items-center justify-end gap-1 text-muted-foreground">
+                          {priceText(r, r.remaining, "—")}
+                          <Info className="size-3 shrink-0" aria-hidden />
+                        </span>
+                      </InfoTooltip>
+                    ) : (
+                      priceText(r, r.remaining, "—")
+                    )}
+                  </td>
                 </tr>
               ))}
               {rows.length === 0 && (

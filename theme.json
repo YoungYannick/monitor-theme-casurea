@@ -2,7 +2,7 @@
   "name": "Casurea",
   "short": "casurea",
   "description": "Casurea - Monitor 极简探针的一个二创主题包",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "author": "YannickYoung",
   "url": "https://github.com/YoungYannick/monitor-theme-casurea",
   "config": [
@@ -150,7 +150,7 @@
     },
     {
       "type": "title",
-      "label": "预算与汇率"
+      "label": "账单"
     },
     {
       "type": "text",
@@ -182,6 +182,20 @@
         }
       ],
       "help": "谁能打开账单页：所有人可看，或仅管理员（站长登录状态）可见；仅管理员时其他人看不到入口，直接访问路由也返回 404"
+    },
+    {
+      "type": "boolean",
+      "key": "billingExcludeOn",
+      "label": "账单排除",
+      "default": false,
+      "help": "开启后，公开备注中有一项与「排除依据」完全相同的机器不计入剩余总价值与月均总支出的合计（账单页底部列表照常列出并标记）；关闭或排除依据留空＝不排除任何机器"
+    },
+    {
+      "type": "string",
+      "key": "billingExcludeTag",
+      "label": "排除依据",
+      "default": "",
+      "help": "公开备注按逗号或分号（半角、全角都认）拆分后，其中一项与这里填的内容完全相同（区分大小写）即视为被排除机器，从合计中排除；留空＝不排除"
     },
     {
       "type": "title",

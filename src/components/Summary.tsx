@@ -290,7 +290,7 @@ function BusiestBlock({ fleet }: { fleet: Fleet }) {
   )
 }
 
-export function SummaryCards({ nodes, finance = false, searching = false, exchangeRates = "", onOpenBilling }: { nodes: Node[]; finance?: boolean; searching?: boolean; exchangeRates?: string; onOpenBilling?: () => void }) {
+export function SummaryCards({ nodes, finance = false, searching = false, exchangeRates = "", excludeTag = "", onOpenBilling }: { nodes: Node[]; finance?: boolean; searching?: boolean; exchangeRates?: string; excludeTag?: string; onOpenBilling?: () => void }) {
   const fleet = summarize(nodes)
   const custom = useMemo(() => parseRateOverrides(exchangeRates), [exchangeRates])
   const needsFx = finance && nodes.some((node) => {
@@ -299,7 +299,7 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
   })
   const fx = useExchangeRates(needsFx)
   const rates = useMemo(() => ({ ...fx.snapshot.rates, ...custom.rates, CNY: 1 }), [fx.snapshot.rates, custom.rates])
-  const budget = budgetOf(nodes, rates)
+  const budget = budgetOf(nodes, rates, excludeTag)
   // 与上方读数使用相同节点集合：分组、地区、搜索三层筛选都作用于历史快照
   // 缓冲仍由 useNodes 维护，进详情再返回不会丢失已收集的历史
   const series = speedSeriesOf(nodes)

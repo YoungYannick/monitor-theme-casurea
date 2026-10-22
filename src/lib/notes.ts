@@ -11,7 +11,7 @@ import { remarksOnDetail, type RemarkPlacement } from "./site-settings.ts"
  *   · **私有备注**（`remark`）——站长写给自己的，**只在登录态下发**，匿名视图里没有这个键
  *     hub 对它不做长度与控制字符校验，历史数据与接口写入都可能带换行
  *
- * **两边的写法一致**：逗号（半角 `,` 与全角 `，`）或分号（`;`）分隔＝多枚小卡片；私有那条多一手
+ * **两边的写法一致**：逗号与分号（均含半角 / 全角）分隔＝多枚小卡片；私有那条多一手
  * 「按换行也拆」（hub 对它没有单行约束）
  *
  * 放在这里（而不是组件里）是因为它们是纯函数：能脱开 React 单测，改起来不怕漏
@@ -21,10 +21,10 @@ export function publicRemark(node: { public_remark?: string | null }): string {
   return (node.public_remark ?? "").trim()
 }
 
-/** 备注值 → 小卡片列表：逗号（半角 / 全角）与分号分隔，削首尾空白、丢掉空片段 */
+/** 备注值 → 小卡片列表：逗号与分号（均含半角 / 全角）分隔，削首尾空白、丢掉空片段 */
 export function splitTags(value: string): string[] {
   return value
-    .split(/[,，;]/)
+    .split(/[,，;；]/)
     .map((tag) => tag.trim())
     .filter(Boolean)
 }
