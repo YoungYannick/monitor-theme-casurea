@@ -313,7 +313,7 @@ function BillingCalendar({
                 if (d < 1 || d > daysInMonth) return <div key={i} className="aspect-square" />
                 const key = dayKey(d)
                 const due = byDay.get(key)
-                // 色阶：到期台数越多背景越浓（secondary → primary 过渡），选中日用主色描边
+                // 色阶：到期台数越多背景越浓，选中日用主色描边；背景走「前景色的实色阶」
                 const heat = due ? Math.min(0.25 + (due.length / maxDue) * 0.75, 1) : 0
                 const cell = (
                   <div
@@ -321,9 +321,9 @@ function BillingCalendar({
                     className={`relative flex aspect-square items-center justify-center rounded-md text-sm transition-colors ${
                       due ? "cursor-pointer" : ""
                     } ${due ? "font-medium text-foreground" : ""} ${key < todayKey ? "text-muted-foreground/50" : ""} ${
-                      key === todayKey ? "ring-1 ring-inset ring-border" : ""
+                      key === todayKey ? "ring-1 ring-inset ring-foreground/60" : ""
                     } ${picked === key ? "ring-1 ring-primary/60" : ""}`}
-                    style={due && heat ? { background: `color-mix(in oklab, var(--primary) ${Math.round(heat * 45)}%, transparent)` } : undefined}
+                    style={due && heat ? { background: `color-mix(in oklab, var(--foreground) ${Math.round(heat * 40)}%, transparent)` } : undefined}
                   >
                     {d}
                     {due && <span aria-hidden className="tnum absolute right-0.5 top-0.5 text-[10px] font-medium leading-none text-destructive">{due.length}</span>}
