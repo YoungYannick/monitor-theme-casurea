@@ -274,11 +274,13 @@ function BillingCalendar({
   const dayKey = (d: number) => `${ym.y}-${String(ym.m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`
 
-  // 选中某台机器：选中它到期的那一天（表格随之筛选；日历月份由 pickedYm 派生自动跟过去）
+  // 选中某台机器：选中它到期的那一天（表格随之筛选；日历月份由 pickedYm 派生自动跟过去）；
+  // 已选中时再点一次取消，与表格「到期时间」列同一个 toggle 手感
   const focusNode = (n: Node) => {
     if (!n.expires_at) return
     const [y, m, d] = n.expires_at.slice(0, 10).split("-").map(Number)
-    onPick(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`)
+    const key = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`
+    onPick(picked === key ? null : key)
   }
 
   return (
@@ -442,20 +444,22 @@ export function Billing({ nodes, exchangeRates = "", excludeTag = "" }: { nodes:
   // 命中排除依据的机器（被排除机器）：底部列表照常列出，但两处金额合计不计入
   const excluded = useMemo(() => new Set(nodes.filter((n) => isExcludedByTag(n, excludeTag)).map((n) => n.id)), [nodes, excludeTag])
 
-  // 实际参与折算的外币及其有效汇率（1 单位 = N 人民币）；缺报价的也列出，和表里的 ≈ 对得上
+  // 实际参与折算的币种及其对目标币种的汇率：计费币种里除目标币种本身全列出；缺报价的也列出，和表里的 ≈ 对得上
   const usedFx = useMemo(() => {
     const codes = new Set<string>()
     for (const n of nodes) {
       if (!(Number.isFinite(n.price) && n.price > 0)) continue
       const code = (n.currency || "").trim().toUpperCase() || "USD"
-      if (code !== "CNY" && code !== target) codes.add(code)
+      if (code !== target) codes.add(code)
     }
     return [...codes].sort().map((code) => {
-      const rate = rates[code]
-      const ok = typeof rate === "number" && Number.isFinite(rate) && rate > 0
-      return { code, text: ok ? `1 ${code} = ${rate.toLocaleString("zh-CN", { maximumSignificantDigits: 4 })} ¥` : `${code} 缺汇率` }
+      const from = rates[code]
+      const to = rates[target]
+      const ok = typeof from === "number" && Number.isFinite(from) && from > 0
+        && typeof to === "number" && Number.isFinite(to) && to > 0
+      return { code, text: ok ? `1 ${code} = ${(from / to).toLocaleString("zh-CN", { maximumSignificantDigits: 4 })} ${currency.symbol}` : `${code} 缺汇率` }
     })
-  }, [nodes, target, rates])
+  }, [nodes, target, rates, currency.symbol])
 
   const changeCurrency = (next: string) => {
     setTarget(next)
@@ -606,7 +610,7 @@ export function Billing({ nodes, exchangeRates = "", excludeTag = "" }: { nodes:
 
       {/* 汇率口径：折合说明 + 用到的币种实际汇率一眼看清 */}
       <p className="text-xs text-muted-foreground" role="status">
-        金额按「1 单位币种 = N 人民币」的参考汇率折算成{currency.name}{fx.snapshot.date ? `（汇率日期 ${fx.snapshot.date}）` : ""}；缺汇率的机器按原币种显示（≈），免费机器不计入各项合计
+        金额按「1 单位币种 = N {currency.name}」的参考汇率折算{fx.snapshot.date ? `（汇率日期 ${fx.snapshot.date}）` : ""}；缺汇率的机器按原币种显示（≈），免费机器不计入各项合计
         {usedFx.length > 0 && (
           <span className="tnum">
             {" "}
