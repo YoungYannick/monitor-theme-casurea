@@ -2,8 +2,7 @@ import type { ReactNode } from "react"
 
 /**
  * 图表 tooltip：本主题自绘的那一枚，一张列表面板 —— 每条曲线一枚同色圆点、名字、值，
- * 需要时后面再跟一小段尾巴（丢包率），最差的一条排最前，窄屏只列前几条、
- * 其余折成「另有 N 条」
+ * 需要时后面再跟一小段尾巴（丢包率），最差的一条排最前；大量延迟项目在列表内滚动
  *
  * 值不是有限数（探测超时）时默认整行不列：一条没有数据的线画不出来，列出来只会
  * 让人以为它是 0 要保留这种行的地方（延迟图，超时恰恰是要看的）在 `keepEmpty`
@@ -36,6 +35,8 @@ export type ChartTooltipProps = {
   emptyText?: string
   /** 排序键，默认按 `value` */
   sortKey?: (entry: TooltipEntry) => number
+  /** 大量延迟项目完整保留，列表在浮层内部滚动 */
+  scrollable?: boolean
 }
 
 const finite = (entry: TooltipEntry) =>
@@ -55,6 +56,7 @@ export function ChartTooltip({
   keepEmpty,
   emptyText,
   sortKey,
+  scrollable,
 }: ChartTooltipProps) {
   if (!active || !payload?.length) return null
   const rows = payload.filter((entry) => finite(entry) || (keepEmpty?.(entry) ?? false))
@@ -65,13 +67,13 @@ export function ChartTooltip({
   const shown = narrow && capNarrow ? ordered.slice(0, capNarrow) : ordered
 
   return (
-    <div className="pointer-events-none max-w-[70vw] rounded-lg border bg-popover px-2 py-1.5 text-[11px] leading-tight shadow-md">
+    <div role="tooltip" className={`${scrollable ? "pointer-events-auto" : "pointer-events-none"} max-w-[70vw] rounded-lg border bg-popover px-2 py-1.5 text-[11px] leading-tight shadow-md`}>
       {/* 时间戳自己格式化：默认 tooltip 的标题在这套样式里字号偏大，而且 hub 给的是秒 */}
       <div className="mb-1 text-muted-foreground">{new Date(Number(label)).toLocaleString("zh-CN")}</div>
-      <ul className="space-y-px">
+      <ul className={`space-y-px ${scrollable ? "max-h-[min(10rem,35dvh)] overflow-y-auto overscroll-contain [scrollbar-gutter:stable]" : ""}`}>
         {shown.map((entry) => (
           <li key={String(entry.dataKey)} className="flex items-center gap-1.5">
-            {/* 与线上同色同线型的那枚小圆点 */}
+            {/* 与线上同色的圆点；延迟曲线始终使用实线 */}
             <span className="size-1.5 shrink-0 rounded-full" style={{ background: entry.color }} />
             <span className="min-w-0 [overflow-wrap:anywhere]">{entry.name}</span>
             {finite(entry) ? (
@@ -107,7 +109,7 @@ export function PingTooltip({
 }: {
   active?: boolean
   label?: string | number
-  rowByTs: Map<number, Record<string, number | [number, number] | null>>
+  rowByTs: Map<number, Record<string, number | [number, number] | null | undefined>>
   probes: { id: number; name: string }[]
   smooth: boolean
   style: (id: number) => { stroke: string }
@@ -130,8 +132,9 @@ export function PingTooltip({
       active
       label={label}
       payload={payload}
+      scrollable={probes.length > 8}
       worstFirst
-      format={(value) => `${value} ms`}
+      format={(value) => `${Number(value.toFixed(1))} ms`}
       // 没答上来的排最后：它们是「没有值」，不是「很快」
       sortKey={(entry) => (entry.value == null ? Number.MAX_SAFE_INTEGER : Number(entry.value))}
       keepEmpty={(entry) => lossOf(entry) > 0}

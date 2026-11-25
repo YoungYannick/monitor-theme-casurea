@@ -9,7 +9,7 @@ import { nearestTimeIndex, timeIndexAtRatio, withTimeGaps } from "@/lib/history"
  * 零依赖的时间序列图：坐标轴 + 网格 + 几条折线/面积 + 一枚悬停 tooltip
  *   · Y 轴从 0 起、刻度是 `quarters(top)`（top 由 `axisTop` 定）；`domain="auto"` 时按数据量程取整齐刻度；
  *   · X 轴是**真时间轴**（`timeTicks` 给的显式刻度）——agent 掉线那段时间不会被压成 0 宽；
- *   · 默认保留 null 断点；延迟图可选连接断点或平滑，仅改变路径；
+ *   · 默认平滑并保留 null 断点；延迟图可选连接断点，仅改变路径；
  *   · 尺寸跟着父容器走（`ResizeObserver`）
  */
 export type ChartSeries = {
@@ -21,6 +21,8 @@ export type ChartSeries = {
   /** 区间（band）：这一列的值是 `[低, 高]`，画成两条边之间的一块淡色（Smokeping 那种「烟」） */
   band?: boolean
   dash?: string
+  opacity?: number
+  width?: number
 }
 
 export type ChartRow = { ts: number } & Record<string, number | [number, number] | null | undefined>
@@ -79,7 +81,8 @@ export function TimeChart({
   domain = "zero",
   left,
   connectGaps = false,
-  smoothLines = false,
+  smoothLines = true,
+  onAxisLeftChange,
   onZoom,
   renderTooltip,
 }: {
@@ -114,6 +117,8 @@ export function TimeChart({
   connectGaps?: boolean
   /** 保留采样端点的平滑曲线，不改变数据或 Y 轴量程 */
   smoothLines?: boolean
+  /** 分行图共享刻度留白，保持同一时间戳在各行的横向位置一致 */
+  onAxisLeftChange?: (left: number) => void
   /** 给了它就能**在图上横向拖选一段缩放**（索引是全量数组里的下标） */
   onZoom?: (from: number, to: number) => void
   /** 自定义悬停内容（延迟图用它接 `PingTooltip`） */
@@ -202,6 +207,9 @@ export function TimeChart({
       document.fonts?.removeEventListener("loadingdone", measure)
     }
   }, [labelsKey, w, h])
+  useLayoutEffect(() => {
+    onAxisLeftChange?.(Math.max(MIN_PLOT_LEFT, Y_LABEL_X + axisWidth + Y_AXIS_GAP))
+  }, [axisWidth, onAxisLeftChange])
   const xTicks = view.length > 1 ? timeTicks(t0, t1).filter((t) => t >= t0 && t <= t1) : []
   const clock = clockFor(hours)
   // 撞在一起的刻度标签直接丢掉（原来靠 recharts 的 minTickGap，这里自己算）：
@@ -235,11 +243,9 @@ export function TimeChart({
         return
       }
       const base = TOP + plotH
-      out.push(
-        `M${run[0].x.toFixed(1)},${base.toFixed(1)}` +
-          run.map((p) => `L${p.x.toFixed(1)},${p.y.toFixed(1)}`).join("") +
-          `L${run[run.length - 1].x.toFixed(1)},${base.toFixed(1)}Z`,
-      )
+      out.push(linePath(run, { smooth: smoothLines }) +
+        `L${run[run.length - 1].x.toFixed(1)},${base.toFixed(1)}` +
+        `L${run[0].x.toFixed(1)},${base.toFixed(1)}Z`)
       run = []
     }
     for (const row of display) {
@@ -249,6 +255,24 @@ export function TimeChart({
         continue
       }
       if (row !== null) run.push({ x: x(row.ts), y: y(v) })
+    }
+    flush()
+    return out
+  }
+
+  /** 断点之间仅剩一个有效样本时保留小实点，避免高丢包线路完全消失 */
+  const isolatedOf = (s: ChartSeries) => {
+    const out: { x: number; y: number }[] = []
+    let run: { x: number; y: number }[] = []
+    const flush = () => {
+      if (run.length === 1) out.push(run[0])
+      run = []
+    }
+    for (const row of display) {
+      const value = row === null ? null : num(row[s.key])
+      if (value === null) {
+        if (!connectGaps) flush()
+      } else if (row !== null) run.push({ x: x(row.ts), y: y(value) })
     }
     flush()
     return out
@@ -305,7 +329,7 @@ export function TimeChart({
     : null
 
   return (
-    <div ref={box} data-chart="" data-plot-left={plotLeft} data-connect-gaps={connectGaps} data-smooth-lines={smoothLines} className="relative h-full w-full">
+    <div ref={box} data-chart="" data-plot-left={plotLeft} data-connect-gaps={connectGaps} data-smooth-lines={smoothLines} className="relative h-full w-full" onMouseLeave={() => { setHover(null); setPointerY(null) }}>
       {w > 0 && h > 0 && (
         <svg width={w} height={h} role="img" aria-label={label} className="overflow-visible">
           <defs>
@@ -362,17 +386,21 @@ export function TimeChart({
           )}
           {/* 线：band 那一列没有线（它的值是 [低, 高]，画成一块区间），别给它生成空路径 */}
           {series.filter((s) => !s.band).map((s) => (
+            <g key={s.key} opacity={s.opacity ?? 1}>
             <path
-              key={`l${s.key}`}
               data-series={s.key}
               d={lineOf(s)}
               fill="none"
               stroke={s.color}
-              strokeWidth={1.5}
+              strokeWidth={s.width ?? 1.5}
               strokeDasharray={s.dash}
               strokeLinejoin="round"
               strokeLinecap="round"
             />
+            {isolatedOf(s).map((point, index) => (
+              <circle key={index} data-series-point={s.key} cx={point.x} cy={point.y} r={2} fill={s.color} />
+            ))}
+            </g>
           ))}
           </g>
           {/* 悬停竖线（原来 `CURSOR` 那枚） */}
@@ -405,10 +433,6 @@ export function TimeChart({
               // 卡片要跟着鼠标走，所以纵坐标也记下来（原来是钉在图表顶端的）
               const rect = (e.currentTarget as SVGRectElement).getBoundingClientRect()
               setPointerY(Math.min(Math.max(e.clientY - rect.top, 0), rect.height))
-            }}
-            onMouseLeave={() => {
-              setHover(null)
-              setPointerY(null)
             }}
             onPointerDown={(e) => {
               if (!onZoom || view.length < 3) return

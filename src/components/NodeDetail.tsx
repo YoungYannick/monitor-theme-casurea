@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Info } from "lucide-react"
 
 import { TimeChart } from "@/components/Chart"
-import { PingTooltip } from "@/components/ChartTooltip"
+import { LatencyCharts, type LatencyChartSelection } from "@/components/LatencyCharts"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Country, deployed, RemarkChips } from "@/components/NodeCard"
@@ -32,13 +32,6 @@ type Probes = Record<string, string>
 type Loss = Record<string, number>
 
 // 时间范围那排按钮由 hub 的保留天数生成（见 @/lib/ranges）
-// 九个色相、再配一版短虚线：第十条起色相重复、换线型
-const COLORS = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `var(--chart-${n})`)
-const PALETTE = [
-  ...COLORS.map((stroke) => ({ stroke, dash: undefined })),
-  ...COLORS.map((stroke) => ({ stroke, dash: "6 3" })),
-]
-
 const TABS = [
   { key: "resources", label: "资源" },
   { key: "latency", label: "网络延迟" },
@@ -158,8 +151,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
   const [smooth, setSmooth] = useState(false)
   const { style: latencyStyle, siteDefault, onChange: chooseLatencyStyle } = useLatencyStyle()
   const { connectGaps, smooth: smoothLines } = latencyLineOptions(latencyStyle)
-  // 隐藏的探测：藏掉慢线，轴随剩余的线重定标，快线才读得清
-  const [hiddenProbes, setHiddenProbes] = useState<number[]>([])
+  const [latencySelection, setLatencySelection] = useState<LatencyChartSelection>({ view: "rows", ids: [], solo: null, colors: {}, hidden: [] })
   const [data, setData] = useState<{ metrics: Point[]; ping: PingPoint[]; probes: Probes; loss?: Loss; step?: number } | null>(null)
   // 请求被拒（hub 限制并发历史窗口会答 503）与空窗口是两回事，分开记
   const [failed, setFailed] = useState("")
@@ -341,13 +333,6 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
     }
   }, [metricRows, peaks, node.mem_total, node.swap_total])
 
-  const shownProbes = useMemo(
-    () => pingSeries.filter((s) => !hiddenProbes.includes(s.id)),
-    [pingSeries, hiddenProbes],
-  )
-  // 色号按全表顺序取（不按可见列表），藏掉别的线不影响自己的色
-  const style = (id: number) => PALETTE[pingSeries.findIndex((p) => p.id === id) % PALETTE.length]
-
   // 每个探测一列（t=原始、s=削峰、b/c=区间、l=丢包、tu/su/bu/cu=丢包断点版）：
   // 所有列都留在同一张宽表里，隐藏探测或开关削峰只是换 `dataKey`，不重建数组
   const pingRows = useMemo(() => {
@@ -387,8 +372,6 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
     return [...rows.values()].sort((a, b) => a.ts - b.ts)
   }, [pingSeries])
 
-  // 延迟 tooltip 按时间戳回查整行（丢包率挂在同一行的另一列上）
-  const rowByTs = useMemo(() => new Map(pingRows.map((row) => [row.ts, row])), [pingRows])
   const zoomIndices = timeRangeIndices(pingRows, zoom)
 
   // 每张资源图各记一段拖选（时间戳）：live 追加或刷新后仍看同一段时间，
@@ -436,7 +419,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
         <TimeChart
           rows={metricRows}
           series={[
-            { key: "mem_used", name: "内存", color: "var(--chart-4)", area: true },
+            { key: "mem_used", name: "内存", color: "var(--chart-2)", area: true },
             ...(available.swap_used ? [{ key: "swap_used", name: "Swap", color: "var(--chart-5)" }] : []),
           ]}
           hours={hours}
@@ -454,8 +437,8 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
         <TimeChart
           rows={metricRows}
           series={[
-            { key: "net_rx", name: "下行", color: "var(--ok)" },
-            { key: "net_tx", name: "上行", color: "var(--chart-2)" },
+            { key: "net_rx", name: "下行", color: "var(--chart-5)" },
+            { key: "net_tx", name: "上行", color: "var(--chart-1)" },
           ]}
           hours={hours}
           step={stepMs}
@@ -471,7 +454,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
       <Panel title={`硬盘 · ${bytes(node.disk_total)}`}>
         <TimeChart
           rows={metricRows}
-          series={[{ key: "disk_used", name: "硬盘", color: "var(--chart-3)", area: true }]}
+          series={[{ key: "disk_used", name: "硬盘", color: "var(--chart-2)", area: true }]}
           hours={hours}
           step={stepMs}
           top={tops.disk > node.disk_total ? axisTop(tops.disk, 1024, 1024) : node.disk_total}
@@ -487,8 +470,8 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
           <TimeChart
             rows={metricRows}
             series={[
-              ...(available.tcp ? [{ key: "tcp", name: "TCP", color: "var(--chart-6)" }] : []),
-              ...(available.udp ? [{ key: "udp", name: "UDP", color: "var(--chart-7)", dash: "4 3" }] : []),
+              ...(available.tcp ? [{ key: "tcp", name: "TCP", color: "var(--chart-1)" }] : []),
+              ...(available.udp ? [{ key: "udp", name: "UDP", color: "var(--chart-4)" }] : []),
             ]}
             hours={hours}
             step={stepMs}
@@ -505,7 +488,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
         <Panel title="进程数">
           <TimeChart
             rows={metricRows}
-            series={[{ key: "procs", name: "进程", color: "var(--chart-8)", area: true }]}
+            series={[{ key: "procs", name: "进程", color: "var(--chart-3)", area: true }]}
             hours={hours}
             step={stepMs}
             top={tops.procs}
@@ -603,18 +586,9 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
                 type="checkbox"
                 data-latency-option="connect-gaps"
                 checked={connectGaps}
-                onChange={(e) => chooseLatencyStyle(latencyStyleFromOptions({ connectGaps: e.target.checked, smooth: smoothLines }))}
+                onChange={(e) => chooseLatencyStyle(latencyStyleFromOptions({ connectGaps: e.target.checked }))}
               />
               连接断点
-            </label>
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground" title="让曲线平滑经过有效采样点；不改变采样值，也不替代削峰">
-              <input
-                type="checkbox"
-                data-latency-option="smooth-lines"
-                checked={smoothLines}
-                onChange={(e) => chooseLatencyStyle(latencyStyleFromOptions({ connectGaps, smooth: e.target.checked }))}
-              />
-              平滑曲线
             </label>
             {latencyStyle !== siteDefault && (
               <button
@@ -698,90 +672,20 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
         ) : pingSeries.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">这段时间没有延迟数据</p>
         ) : (
-          // 高度与 embedded 同一套（h-72 固定）：不随视口测量撑满，上方内容折行时高度稳定，
-          // 与资源页签的行为一致
-          <div className="flex h-72 flex-col gap-3">
-            {/* `min-h-0` 让 `flex-1` 是真数字而不是内容自身高度 */}
-            <div className="min-h-0 w-full flex-1 text-muted-foreground">
-              {shownProbes.length === 0 ? (
-                <p className="py-8 text-center text-sm">没有选中任何探测</p>
-              ) : (
-                <TimeChart
-                  rows={pingRows}
-                  series={[
-                    // 区间（band）只在屏上只有一个探测时画：几个叠在一起会糊成一片
-                    ...(shownProbes.length === 1
-                      ? shownProbes.map((s) => ({
-                          key: `${smooth ? "cu" : "bu"}${s.id}`,
-                          name: s.name,
-                          color: style(s.id).stroke,
-                          band: true,
-                        }))
-                      : []),
-                    ...shownProbes.map((s) => ({
-                      key: `${smooth ? "su" : "tu"}${s.id}`,
-                      name: s.name,
-                      color: style(s.id).stroke,
-                      dash: style(s.id).dash,
-                    })),
-                  ]}
-                  hours={hours}
-                  step={stepMs}
-                  // 延迟轴不从 0 起：这些线路活在一条窄带里，锚到 0 会把起伏压平
-                  domain="auto"
-                  unit="ms"
-                  connectGaps={connectGaps}
-                  smoothLines={smoothLines}
-                  from={zoomIndices?.[0] ?? 0}
-                  to={zoomIndices?.[1] ?? pingRows.length - 1}
-                  onZoom={(from, to) => setZoom(from === 0 && to === pingRows.length - 1 ? null : [pingRows[from].ts, pingRows[to].ts])}
-                  label="节点延迟走势"
-                  renderTooltip={(row) => (
-                    <PingTooltip active label={row.ts} rowByTs={rowByTs} probes={shownProbes} smooth={smooth} style={style} />
-                  )}
-                />
-              )}
-            </div>
-
-            {/* 图下的探测开关：点一枚隐/显一条线，轴随剩余的线重定标 */}
-            {(pingSeries.length > 1 || pingSeries.some((s) => s.loss > 0 || hiddenProbes.includes(s.id))) && (
-            <div className="flex flex-wrap items-center justify-center gap-1.5">
-              {pingSeries.map((s) => {
-                const shown = !hiddenProbes.includes(s.id)
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() =>
-                      setHiddenProbes((h) => (shown ? [...h, s.id] : h.filter((id) => id !== s.id)))
-                    }
-                    className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-opacity ${
-                      shown ? "" : "opacity-40"
-                    }`}
-                  >
-                    <svg width="14" height="6" className="shrink-0" aria-hidden>
-                      <line
-                        x1="0"
-                        y1="3"
-                        x2="14"
-                        y2="3"
-                        stroke={style(s.id).stroke}
-                        strokeDasharray={style(s.id).dash}
-                        strokeWidth="2"
-                      />
-                    </svg>
-                    {s.name}
-                    {/* 线只画答上来的，丢包另标一枚 */}
-                    {s.loss > 0 && (
-                      <span className="tabular-nums opacity-60">
-                        丢 {s.loss < 1 ? "<1" : Math.round(s.loss)}%
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-            )}
-          </div>
+          <LatencyCharts
+            state={latencySelection}
+            onStateChange={setLatencySelection}
+            rows={pingRows}
+            probes={pingSeries}
+            hours={hours}
+            step={stepMs}
+            smooth={smooth}
+            connectGaps={connectGaps}
+            smoothLines={smoothLines}
+            from={zoomIndices?.[0] ?? 0}
+            to={zoomIndices?.[1] ?? pingRows.length - 1}
+            onZoom={(from, to) => setZoom(from === 0 && to === pingRows.length - 1 ? null : [pingRows[from].ts, pingRows[to].ts])}
+          />
         )
       ) : isLive ? (
         liveRows.length === 0 && !liveSeeded ? (

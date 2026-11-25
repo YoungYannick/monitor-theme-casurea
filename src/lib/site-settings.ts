@@ -86,29 +86,30 @@ export function pageWidthOf(v: unknown): number {
   return Math.min(PAGE_WIDTH_MAX, Math.max(PAGE_WIDTH_MIN, Math.round(v)))
 }
 
-/** 延迟曲线四档：折线/平滑 × 保留断点/连接断点 */
-export type LatencyStyle = "broken" | "connected" | "smooth" | "connectedSmooth"
+/** 延迟曲线始终平滑，仅选择保留或连接断点 */
+export type LatencyStyle = "smooth" | "connectedSmooth"
 
-/** 后台下拉与配置校验共用的四档顺序 */
-export const LATENCY_STYLES: LatencyStyle[] = ["broken", "connected", "smooth", "connectedSmooth"]
+/** 后台下拉与配置校验共用的顺序 */
+export const LATENCY_STYLES: LatencyStyle[] = ["smooth", "connectedSmooth"]
 
-/** 旧站没有这一项，或保存了无效值时，保留原来的折线与断点 */
+/** 旧折线配置迁移为平滑曲线，保留站长原来的断点选择 */
 export function latencyStyleOf(v: unknown): LatencyStyle {
+  if (v === "broken") return "smooth"
+  if (v === "connected") return "connectedSmooth"
   return LATENCY_STYLES.includes(v as LatencyStyle) ? (v as LatencyStyle) : DEFAULTS.latencyStyle
 }
 
 /** 只决定路径画法，不插补样本、不修改丢包或无响应值 */
 export function latencyLineOptions(style: LatencyStyle): { connectGaps: boolean; smooth: boolean } {
   return {
-    connectGaps: style === "connected" || style === "connectedSmooth",
-    smooth: style === "smooth" || style === "connectedSmooth",
+    connectGaps: style === "connectedSmooth",
+    smooth: true,
   }
 }
 
-/** 详情中的两个开关回写为统一线形，切换其中一个时可保留另一个 */
-export function latencyStyleFromOptions({ connectGaps, smooth }: { connectGaps: boolean; smooth: boolean }): LatencyStyle {
-  if (smooth) return connectGaps ? "connectedSmooth" : "smooth"
-  return connectGaps ? "connected" : "broken"
+/** 详情中的断点开关回写为统一线形 */
+export function latencyStyleFromOptions({ connectGaps }: { connectGaps: boolean }): LatencyStyle {
+  return connectGaps ? "connectedSmooth" : "smooth"
 }
 
 /** 「备注显示位置」：`both` 卡片与详情页（默认）/ `card` 只在卡片 / `detail` 只在整页详情 / `none` 都不显示 */
@@ -143,8 +144,8 @@ export const DEFAULTS: ThemeConfig = {
   // 延迟线路：留空 = 按后台顺序自动显示前几条；填了名字就只显示这些（一行一个）
   // 名字是 ping 任务的名字，不是节点名——对不上的行会被跳过
   pingLines: "",
-  // 保留旧版的折线与断点；四处延迟图共用站点默认值
-  latencyStyle: "broken",
+  // 四处延迟图默认使用平滑曲线，并保留丢包与缺测断点
+  latencyStyle: "smooth",
   // 备注显示位置：默认两边都摊
   remarkPlacement: "both",
   // 地球默认显示：它本来就是这块页面的招牌，站长要更安静的版面可以在后台关掉；

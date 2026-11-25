@@ -134,26 +134,18 @@
       "type": "select",
       "key": "latencyStyle",
       "label": "延迟曲线样式",
-      "default": "broken",
+      "default": "smooth",
       "options": [
         {
-          "value": "broken",
-          "label": "折线，保留断点（默认）"
-        },
-        {
-          "value": "connected",
-          "label": "连续折线"
-        },
-        {
           "value": "smooth",
-          "label": "平滑曲线，保留断点"
+          "label": "平滑曲线，保留断点（默认）"
         },
         {
           "value": "connectedSmooth",
           "label": "连续平滑曲线"
         }
       ],
-      "help": "统一首页卡片、浮层、紧凑展开与节点详情的默认线形；仅影响显示，不改变丢包或无响应数据"
+      "help": "首页卡片、浮层、紧凑展开与节点详情均使用平滑曲线；默认保留丢包与缺测断点，连接断点仅影响显示，不改变数据"
     },
     {
       "type": "title",
