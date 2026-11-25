@@ -33,7 +33,7 @@ export function globeFlowPoint(cam: Camera, location: [number, number]): Pt {
 }
 
 /** 沿最短经度方向在两端纬度之间连接，再径向抬升；旋转帧只做相机投影 */
-export function prepareGlobeFlows(points: GlobeNode[], center: GlobeNode, centerOnline: boolean): PreparedGlobeFlow[] {
+export function prepareGlobeFlows(points: GlobeNode[], center: Pick<GlobeNode, "key" | "ll">, centerOnline: boolean): PreparedGlobeFlow[] {
   const end = unit(center.ll)
   return points.flatMap((point) => {
     if (point.key === center.key) return []
@@ -148,7 +148,7 @@ function arc(start: Point, end: Point, scale: number, bounds: MapBounds) {
 }
 
 /** Prefer a complete route in the current viewport. For partial routes, prefer visibility, then distance. */
-export function mapFlowPaths(points: FlowPoint[], center: FlowPoint, centerOnline: boolean, scale: number, flat: FlatCamera): FlowPath[] {
+export function mapFlowPaths(points: FlowPoint[], center: Pick<FlowPoint, "key" | "px" | "py">, centerOnline: boolean, scale: number, flat: FlatCamera): FlowPath[] {
   const bounds = flowMapBounds(flat)
   const worldWidth = flat.bounds.w * flat.zoom / 100
   return points.flatMap((point) => {

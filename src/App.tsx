@@ -19,7 +19,7 @@ import { regionView } from "@/lib/globe"
 import { hasDetailRemarks } from "@/lib/notes"
 import { searchNodes } from "@/lib/search"
 import { hasGroupTabs, hasSummary, isBudgetLayout, LatencyStyleContext, useCardStyle, useGlobeVisible, useLocalFarm, useThemeConfig } from "@/lib/theme-config"
-import { isBeijingNight, readThemePreference, resolveDark, type ThemeMode } from "@/lib/site-settings"
+import { isBeijingNight, parseMapFlowCenter, readThemePreference, resolveDark, type ThemeMode } from "@/lib/site-settings"
 import type { LatencyStyle, RemarkPlacement } from "@/lib/site-settings"
 import { FarmIcon } from "@/components/FarmIcon"
 
@@ -222,6 +222,7 @@ function useTheme(siteMode: ThemeMode, configReady: boolean) {
 
 export default function App() {
   const [config, configReady] = useThemeConfig()
+  const mapFlowCenter = useMemo(() => parseMapFlowCenter(config.mapFlowCenterId), [config.mapFlowCenterId])
   // header / main / footer 三处共用的内容宽度：1280 保底、宽屏放开到后台设的百分比
   const contentMax = `max(1280px, ${config.pageWidth}%)`
   const [latencyChoice, setLatencyChoice] = useState<{ siteDefault: LatencyStyle; style: LatencyStyle } | null>(null)
@@ -571,7 +572,7 @@ export default function App() {
             {hasSummary(config.listTop) && <SummaryCards nodes={found.shown} finance={isBudgetLayout(config.listTop)} searching={found.active} exchangeRates={config.exchangeRates} excludeTag={config.billingExcludeOn ? config.billingExcludeTag : ""} onOpenBilling={billingVisible ? () => goBilling(true) : undefined} />}
             {/* 节点地球：概览卡片之下、列表之上（上游就是这个次序） */}
             {globeOn && (
-              <Globe nodes={view.shown} flowCenterId={Number(config.mapFlowCenterId) || null} region={regions.current} regionGroup={regions.group} onRegion={(key, group) => { setRegion(key); setRegionGroup(group) }} onOpen={go} onWarm={warmDetail} />
+              <Globe nodes={view.shown} flowCenter={mapFlowCenter} region={regions.current} regionGroup={regions.group} onRegion={(key, group) => { setRegion(key); setRegionGroup(group) }} onOpen={go} onWarm={warmDetail} />
             )}
             {/* 一台都剩不下时说清楚是谁筛没的、去哪儿取消 —— 否则一片空白像站点坏了
                 搜索那一层排在前面：它是访客刚动手的那层 */}

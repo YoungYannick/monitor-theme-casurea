@@ -10,6 +10,7 @@ import { COARSE_WORLD_OUTLINES, WORLD_OUTLINES } from "@/lib/world"
 import { MAP_DEFAULT_CENTER, flatCamera, flatNodes, mapHitAreas, mapPaths, mapViewport, prepareMapRings, type FlatNode } from "@/lib/map"
 import { flowMapBounds, globeFlowPaths, globeFlowPoint, globeFlowView, mapFlowPaths, prepareGlobeFlows } from "@/lib/map-flow"
 import type { Node } from "@/lib/api"
+import type { MapFlowCenter } from "@/lib/site-settings"
 import { Button } from "@/components/ui/button"
 
 /**
@@ -75,10 +76,10 @@ function measureLabel(text: string): number | null {
   return labelCtx.measureText(text).width
 }
 
-export function Globe({ nodes, flowCenterId, region, regionGroup, onRegion, onOpen, onWarm }: {
+export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRegion, onOpen, onWarm }: {
   /** 当前分组里的节点（与概览卡片、下面的列表同一批） */
   nodes: Node[]
-  flowCenterId: number | null
+  flowCenter: MapFlowCenter | null
   /** 选中的地区键（null = 全部） */
   region: string | null
   regionGroup: string | null
@@ -107,9 +108,11 @@ export function Globe({ nodes, flowCenterId, region, regionGroup, onRegion, onOp
   const labelCount = points.length
   const pointByKey = useMemo(() => new Map(points.map((point) => [point.key, point])), [points])
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
-  const flowNode = flowCenterId === null ? undefined : nodeById.get(flowCenterId)
-  const flowPoint = flowNode && points.find((point) => point.nodeIds.includes(flowNode.id))
-  const globeFlows = useMemo(() => flowNode && flowPoint ? prepareGlobeFlows(points, flowPoint, flowNode.online) : [], [points, flowPoint, flowNode])
+  const flowNode = flowTarget?.kind === "node" ? nodeById.get(flowTarget.id) : undefined
+  const manualCenter = useMemo(() => flowTarget?.kind === "coordinates" ? { key: `coordinates:${flowTarget.location.join(",")}`, ll: flowTarget.location } : undefined, [flowTarget])
+  const flowPoint = manualCenter ?? (flowNode && points.find((point) => point.nodeIds.includes(flowNode.id)))
+  const centerOnline = manualCenter !== undefined || !!flowNode?.online
+  const globeFlows = useMemo(() => flowPoint ? prepareGlobeFlows(points, flowPoint, centerOnline) : [], [points, flowPoint, centerOnline])
   const rows = useMemo(() => groupedRegionRows(nodes).flatMap(({ group, rows }) => rows.map((row) => ({ ...row, group }))), [nodes])
   const sideBySide = useSyncExternalStore((notify) => subscribe(SIDE_BY_SIDE, notify), () => SIDE_BY_SIDE.matches)
   const regionHost = useRef<HTMLDivElement>(null)
@@ -453,13 +456,16 @@ export function Globe({ nodes, flowCenterId, region, regionGroup, onRegion, onOp
   const placed = mode === "3d" ? layoutLabels(cam, points, sides.current, labelMax, frame.cx, measured)
     : flatPoints.filter((point) => point.visible)
   const globeCenter = mode === "3d" && flowPoint ? globeFlowPoint(cam, flowPoint.ll) : null
-  const flatFlowCenter = flowPoint && flatPoints.find((point) => point.key === flowPoint.key)
+  const manualFlatCenter = mode === "2d" && manualCenter ? flat.at(...manualCenter.ll) : null
+  const flatFlowCenter = manualCenter && manualFlatCenter
+    ? { key: manualCenter.key, px: manualFlatCenter.x, py: manualFlatCenter.y }
+    : flowPoint && flatPoints.find((point) => point.key === flowPoint.key)
   const flowCenter = globeCenter
     ? { px: globeCenter.x, py: globeCenter.y }
     : flatFlowCenter
   const flowCenterBack = globeCenter !== null && globeCenter.k <= 0.02
   const flowPaths = mode === "3d" ? globeFlowPaths(globeFlows, cam)
-    : flowNode && flatFlowCenter ? mapFlowPaths(flatPoints, flatFlowCenter, flowNode.online, markerScale, flat) : []
+    : flatFlowCenter ? mapFlowPaths(flatPoints, flatFlowCenter, centerOnline, markerScale, flat) : []
   const flowBounds = mode === "2d" && flowPaths.length ? flowMapBounds(flat) : null
   // 不同城市的信标仍保留真实位置；重叠点击区按最近中心分开，不再被上层的针盖住
   const hitAreas = mapHitAreas(placed, 9 * markerScale)
@@ -471,7 +477,7 @@ export function Globe({ nodes, flowCenterId, region, regionGroup, onRegion, onOp
 
   return (
     <Tooltip.Provider delayDuration={0}>
-    <section className="globe-panel" aria-label="节点地图" data-map-mode={mode} data-map-spin={rotating ? "true" : "false"} data-map-spinning={spinning ? "true" : "false"} data-marker-pulse={inView && pageVisible && !reduced ? "true" : "false"} data-map-flow-playing={flowPoint ? flowPlaying : undefined}>
+    <section className="globe-panel" aria-label="节点地图" data-map-mode={mode} data-map-spin={rotating ? "true" : "false"} data-map-spinning={spinning ? "true" : "false"} data-marker-pulse={inView && pageVisible && !reduced ? "true" : "false"} data-map-flow-playing={flowPoint ? flowPlaying : undefined} data-map-flow-origin={flowPoint ? flowTarget?.kind : undefined} data-map-flow-longitude={flowPoint?.ll[0]} data-map-flow-latitude={flowPoint?.ll[1]}>
       <div className="globe-main" style={{ "--globe-shared-height": `${sharedHeight}px`, "--globe-mobile-height": `${mobileHeight}px` } as CSSProperties}>
         <div
           ref={host}

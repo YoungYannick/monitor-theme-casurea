@@ -39,7 +39,7 @@ export type ThemeConfig = {
    * （与 `cardStyle` 同一套口径：站点级设置存 hub、访客偏好才落本地）
    */
   globeOn: boolean
-  /** 地图流向的中心节点；空串关闭 */
+  /** 地图流向中心：节点 ID 或经度,纬度；空串关闭，沿用原配置键 */
   mapFlowCenterId: string
   /** 站点用哪一档明暗：随系统 / 随北京时间自动 / 固定亮 / 固定暗（访客自己的开关优先） */
   themeMode: ThemeMode
@@ -84,6 +84,23 @@ export const PAGE_WIDTH_MAX = 100
 export function pageWidthOf(v: unknown): number {
   if (typeof v !== "number" || !Number.isFinite(v)) return DEFAULTS.pageWidth
   return Math.min(PAGE_WIDTH_MAX, Math.max(PAGE_WIDTH_MIN, Math.round(v)))
+}
+
+export type MapFlowCenter = { kind: "node"; id: number } | { kind: "coordinates"; location: [number, number] }
+
+/** 单个字段同时接受节点 ID 和经纬度，拒绝缺项、非法数字与越界坐标。 */
+export function parseMapFlowCenter(value: unknown): MapFlowCenter | null {
+  if (typeof value !== "string") return null
+  const text = value.trim()
+  if (/^[1-9]\d*$/.test(text)) {
+    const id = Number(text)
+    return Number.isSafeInteger(id) ? { kind: "node", id } : null
+  }
+  const parts = text.split(/[,，]/).map((part) => part.trim())
+  if (parts.length !== 2 || !parts.every((part) => /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(part))) return null
+  const [lon, lat] = parts.map(Number)
+  if (!Number.isFinite(lon) || !Number.isFinite(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) return null
+  return { kind: "coordinates", location: [lon, lat] }
 }
 
 /** 延迟曲线始终平滑，仅选择保留或连接断点 */
@@ -244,6 +261,7 @@ export function isBudgetLayout(top: ThemeConfig["listTop"]): boolean {
  */
 export function normalizeConfig(saved: unknown): ThemeConfig {
   const s = (saved && typeof saved === "object" ? saved : {}) as Record<string, unknown>
+  const flowCenter = parseMapFlowCenter(s.mapFlowCenterId)
   return {
     // select：值不在声明里的选项内（旧版本、手改）就当没保存过，回落默认；
     // 旧值 "detail" 迁到 "latency"（见 cardStyleOf）
@@ -260,7 +278,7 @@ export function normalizeConfig(saved: unknown): ThemeConfig {
       : DEFAULTS.remarkPlacement,
     // 开关：只认真布尔 老站点配置里没有这个键（→ 默认显示）；写成 "false" 这种字符串不算数
     globeOn: typeof s.globeOn === "boolean" ? s.globeOn : DEFAULTS.globeOn,
-    mapFlowCenterId: typeof s.mapFlowCenterId === "string" && /^[1-9]\d*$/.test(s.mapFlowCenterId.trim()) && Number.isSafeInteger(Number(s.mapFlowCenterId)) ? s.mapFlowCenterId.trim() : "",
+    mapFlowCenterId: flowCenter ? flowCenter.kind === "node" ? String(flowCenter.id) : flowCenter.location.join(",") : "",
     // 四档明暗：认不出来的取值（旧版本、手改）回落默认，别让页面卡在一个不存在的档上
     themeMode: THEME_MODES.includes(s.themeMode as ThemeMode) ? (s.themeMode as ThemeMode) : DEFAULTS.themeMode,
     // 内容宽度：旧站点没有这个键（→ 默认 85%）；非数字/越界由 pageWidthOf 收拢

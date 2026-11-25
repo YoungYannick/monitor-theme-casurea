@@ -2,7 +2,7 @@
   "name": "Casurea",
   "short": "casurea",
   "description": "Casurea - Monitor 极简探针的一个二创主题包",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "author": "YannickYoung",
   "url": "https://github.com/YoungYannick/monitor-theme-casurea",
   "config": [
@@ -20,9 +20,9 @@
     {
       "type": "text",
       "key": "mapFlowCenterId",
-      "label": "地图流向中心节点 ID",
+      "label": "地图流向中心",
       "default": "",
-      "help": "填写中心节点详情 /node/ 后的数字 ID，留空关闭 连线表示各地点向中心节点汇聚，光点为流向示意 地图宽度跟随页面内容宽度"
+      "help": "填节点 ID（如 1），或经度,纬度（如 -118.2437,34.0522），经度 -180～180、纬度 -90～90，留空关闭。坐标为固定汇聚点，连线表示各地点流向中心，地图宽度跟随页面内容宽度"
     },
     {
       "type": "select",
