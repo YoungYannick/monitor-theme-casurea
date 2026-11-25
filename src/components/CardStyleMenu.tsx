@@ -40,6 +40,10 @@ export function CardStyleMenu({ value, siteDefault, onPick }: {
   const menu = useRef<HTMLSpanElement>(null)
   // 浮层的落点（宿主 + 坐标），开着的时候才非空；见下面 useLayoutEffect 那段注释
   const [spot, setSpot] = useState<{ host: HTMLElement; top: number; right: number } | null>(null)
+  const mounted = open && spot !== null
+  useEffect(() => {
+    if (mounted) menu.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus()
+  }, [mounted])
 
   // ★ 浮层**不能**长在按钮里：按钮住在顶栏那条 `overflow-x-auto` 的图标带里，越界的子元素
   //   会被裁掉，点开后菜单几乎整个被裁没，看着就是「点了没反应」所以浮层经 portal 挂到
@@ -73,7 +77,10 @@ export function CardStyleMenu({ value, siteDefault, onPick }: {
       if (!(el instanceof globalThis.Node) || !(box.current?.contains(el) || menu.current?.contains(el))) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false)
+      if (e.key === "Escape") {
+        setOpen(false)
+        box.current?.querySelector<HTMLButtonElement>("button")?.focus()
+      }
     }
     document.addEventListener("pointerdown", onDown)
     document.addEventListener("keydown", onKey)
@@ -103,6 +110,21 @@ export function CardStyleMenu({ value, siteDefault, onPick }: {
           role="menu"
           aria-label="卡片形态"
           data-style-menu=""
+          onKeyDown={(event) => {
+            const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button")]
+            const current = items.indexOf(document.activeElement as HTMLButtonElement)
+            let next = current
+            if (event.key === "ArrowDown") next = (current + 1) % items.length
+            else if (event.key === "ArrowUp") next = (current - 1 + items.length) % items.length
+            else if (event.key === "Home") next = 0
+            else if (event.key === "End") next = items.length - 1
+            else return
+            event.preventDefault()
+            items[next]?.focus()
+          }}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget) && !box.current?.contains(event.relatedTarget)) setOpen(false)
+          }}
           // 绝对定位挂在 header 上；right 贴住按钮右缘（窄屏也不会出界），top 落在按钮下沿 4px
           style={{ top: spot.top, right: spot.right }}
           className="absolute z-20 block w-36 overflow-hidden rounded-md border bg-popover py-1 text-sm shadow-md"
@@ -119,6 +141,7 @@ export function CardStyleMenu({ value, siteDefault, onPick }: {
               onClick={() => {
                 onPick(v)
                 setOpen(false)
+                box.current?.querySelector<HTMLButtonElement>("button")?.focus()
               }}
             >
               <Icon className="size-4 shrink-0 text-muted-foreground" />

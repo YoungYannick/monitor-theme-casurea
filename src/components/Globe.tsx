@@ -1,29 +1,46 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react"
-import { ChevronRight, Minus, Pause, Play, Plus, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, Minus, Pause, Play, Plus, X } from "lucide-react"
 import { Dialog, Tooltip } from "radix-ui"
 
 import {
-  camera, clampLat, globeCaption, globeNodes, globeProfile, graticule, inkWidthWith, landPaths, layoutLabels,
-  GLOBE_ZOOM, prepareRings, regionRows, sweepLonAt, sweepOpacity, VIEW, wrapLon, zoomView, type Placed, type Quality,
+  camera, clampLat, globeNodes, globeProfile, graticule, inkWidthWith, landPaths, layoutLabels,
+  GLOBE_ZOOM, prepareRings, groupedRegionRows, paginateRegionRows, VIEW, wrapLon, zoomView, type Placed, type Quality,
 } from "@/lib/globe"
 import { COARSE_WORLD_OUTLINES, WORLD_OUTLINES } from "@/lib/world"
-import { flatCamera, flatNodes, mapHitAreas, mapPaths, mapViewport, prepareMapRings, type FlatNode } from "@/lib/map"
+import { MAP_DEFAULT_CENTER, flatCamera, flatNodes, mapHitAreas, mapPaths, mapViewport, prepareMapRings, type FlatNode } from "@/lib/map"
+import { flowMapBounds, globeFlowPaths, globeFlowPoint, globeFlowView, mapFlowPaths, prepareGlobeFlows } from "@/lib/map-flow"
 import type { Node } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 
 /**
- * 列表页顶部的「节点地球」：正射投影的一颗地球，每台机器一枚针、一条引线连到左右两摞
- * 标签上，旁边一条一条列着地区 几何与排布在 `@/lib/globe` 与 `@/lib/map` 里，
- * 这一层负责 3D/2D 切换、重画、旋转、缩放、节点点击与地区筛选
+ * 列表页顶部的「节点地球」：正射投影的一颗地球，每个地点一枚信标、一条引线连到左右两摞
+ * 地点标签上，旁边列出地区 2D 只显示可点击的节点标记，地图按可用区域铺开
+ * 几何与排布在 `@/lib/globe` 与 `@/lib/map` 里
  *
- * 重画节奏（别随手改成每帧）：空闲按档位 `idleMs` 重画；拖拽跟指针事件走；钉住地区后
- * 不再自转；手动暂停、2D、滚出视口、后台、减弱动态效果都停
- * 拖动只接管**横向**（`touch-action: pan-y`）：竖着划是滚页面
+ * 这一层负责 3D/2D 切换、重画、旋转、缩放、节点点击与地区筛选
+ * 数据（节点 → 针的落点）只在节点列表变了时算一次
+ *
+ * 重画的节奏（这是它能不能在手机上呆着的关键，别随手改成每帧）：
+ *   · 空闲时按档位的 `idleMs` 重画（medium 64ms ≈ 15fps，low 90ms ≈ 11fps），
+ *     每帧只把经纬度往前推一点点，看起来是匀速自转，实际画的是 11~15 张/秒；
+ *   · 拖拽时跟着指针事件走（指针多快就多快，一次事件一张）；
+ *   · 钉住某个地区（点过侧栏）就不再自转，也不再重画
+ *   · 手动暂停、2D 模式、滚出视口、标签页在后台、系统开了「减弱动态效果」，都停
+ *
+ * 拖动只接管**横向**（`touch-action: pan-y`）：竖着划是滚页面 上游把整个地球的
+ * 触摸手势全部吃掉（`touch-action: none`），在手机上等于在一块 280px 高的区域里
+ * 划不动页面 —— 地球是拿来看的，不值得挡住滚动
  */
 /**
  * 标签的真实字宽（用户单位）：`canvas.measureText` 按 `.globe-label` 那一套字体量一次
- * 估法偏小，判「放不放得下」会漏，漏了就被 SVG 视口直接裁掉字体串与 index.css 的
- * `.globe-label` 必须一致（改一处要改两处）；量不出来返回 null，调用方退回估法
+ *
+ * 为什么要真量：上游那套「半角 5.05 / 全角 8.6」的估法**偏小一成**，而判「这行字放不放得下」
+ * 是拿它算的 —— 估小了就把长名字留在原地，溢出的半句话被 SVG 的视口**直接裁掉**，
+ * 页面上什么都不报（见 references/svg-globe-port.md 第 2 条）真量之后：
+ * 放得下的不再截、放不下的截到真放得下，两侧都不再有「半个字」
+ *
+ * 字体串与 index.css 的 `.globe-label` 必须一致（字号也在这里，改一处要改两处）
+ * 量不出来（老浏览器 / 没有 canvas）返回 null，调用方退回估法
  */
 const LABEL_FONT = '9.35px ui-monospace, SFMono-Regular, "IBM Plex Mono", monospace'
 let labelCtx: CanvasRenderingContext2D | null | undefined
@@ -58,22 +75,25 @@ function measureLabel(text: string): number | null {
   return labelCtx.measureText(text).width
 }
 
-export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
+export function Globe({ nodes, flowCenterId, region, regionGroup, onRegion, onOpen, onWarm }: {
   /** 当前分组里的节点（与概览卡片、下面的列表同一批） */
   nodes: Node[]
-  /** 深色模式：只影响扫掠经线的透明度 */
-  dark: boolean
+  flowCenterId: number | null
   /** 选中的地区键（null = 全部） */
   region: string | null
-  onRegion: (key: string | null) => void
+  regionGroup: string | null
+  onRegion: (key: string | null, group: string | null) => void
   onOpen: (id: number) => void
   /** 指针已经落到某台机器上：提前把详情那块 chunk 取回来（见 App 的 warmDetail） */
   onWarm: () => void
 }) {
   const narrow = useNarrow()
   /**
-   * ★窄屏（≤720px）不降档：low 档的粗岸线就是一张草图现在跟桌面同档；真机若发烫或
-   * 掉帧，把这个开关改回 `true` 即可
+   * ★ 窄屏（≤720px）**不再降档** 2026-10-07 站长看过手机上的 low 档之后说「地球太简陋了」——
+   * 那一档只有 104 个点的粗岸线（一格 60° 的网、不画扫掠、不画引线），确实就是一张草图
+   * 现在跟桌面同档：detailed 岸线（79 环 / 1483 点，但每帧只投影**正面那一半**，约 500 点）、
+   * 30° 经纬网与地点引线 代价是手机上每帧多做约 4 倍的点与路径字符串 ——
+   * **真机若发烫或掉帧，回退就是下面那个开关改回 `true`（一行）**，别犹豫
    */
   const NARROW_LOW_TIER = false
   const quality: Quality = narrow && NARROW_LOW_TIER ? "low" : "medium"
@@ -84,20 +104,69 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
   )
   const flatPrep = useMemo(() => prepareMapRings(WORLD_OUTLINES), [])
   const points = useMemo(() => globeNodes(nodes), [nodes])
-  const labelCount = points.reduce((count, point) => count + point.nodeIds.length, 0)
+  const labelCount = points.length
   const pointByKey = useMemo(() => new Map(points.map((point) => [point.key, point])), [points])
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
-  const rows = useMemo(() => regionRows(nodes), [nodes])
-  // 「全部」那一行的悬停说明：合计里有多少台认不出国家（不上地球与地区列表）——
-  // 「全部 N」与地区分项合计对不上这件事，就在那里有一句明面上的说法
+  const flowNode = flowCenterId === null ? undefined : nodeById.get(flowCenterId)
+  const flowPoint = flowNode && points.find((point) => point.nodeIds.includes(flowNode.id))
+  const globeFlows = useMemo(() => flowNode && flowPoint ? prepareGlobeFlows(points, flowPoint, flowNode.online) : [], [points, flowPoint, flowNode])
+  const rows = useMemo(() => groupedRegionRows(nodes).flatMap(({ group, rows }) => rows.map((row) => ({ ...row, group }))), [nodes])
+  const sideBySide = useSyncExternalStore((notify) => subscribe(SIDE_BY_SIDE, notify), () => SIDE_BY_SIDE.matches)
+  const regionHost = useRef<HTMLDivElement>(null)
+  const [regionLayout, setRegionLayout] = useState({ height: sideBySide ? 180 : 236, columns: narrow ? 2 : 3, rowHeight: sideBySide ? 20 : 32, rowGap: 6, groupHeight: 30, groupGap: 10, pagerHeight: sideBySide ? 40 : 48 })
+  useEffect(() => {
+    const el = regionHost.current
+    if (!el || typeof ResizeObserver !== "function") return
+    const observer = new ResizeObserver(() => {
+      const list = el.querySelector<HTMLElement>(".globe-regions")
+      const title = el.querySelector<HTMLElement>(".globe-side-title")
+      const all = el.querySelector<HTMLElement>(".globe-reg-all")
+      const groups = el.querySelector<HTMLElement>(".globe-region-groups")
+      const grid = el.querySelector<HTMLElement>(".globe-region-grid")
+      const heading = el.querySelector<HTMLElement>(".globe-region-group-title")
+      if (!list || !title || !all || !groups) return
+      const rowHeight = all.getBoundingClientRect().height
+      const groupHeight = heading ? heading.getBoundingClientRect().height + parseFloat(getComputedStyle(heading).marginBottom) : 30
+      const headerHeight = title.getBoundingClientRect().height + rowHeight + 2 * parseFloat(getComputedStyle(list).rowGap)
+      const next = {
+        height: sideBySide ? Math.max(groupHeight + rowHeight, Math.floor(el.clientHeight - headerHeight - 4)) : 236,
+        columns: narrow ? 2 : 3,
+        rowHeight,
+        rowGap: grid ? parseFloat(getComputedStyle(grid).rowGap) : 6,
+        groupHeight,
+        groupGap: parseFloat(getComputedStyle(groups).rowGap),
+        pagerHeight: sideBySide ? 40 : 48,
+      }
+      setRegionLayout((previous) => JSON.stringify(previous) === JSON.stringify(next) ? previous : next)
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [sideBySide, narrow])
+  const pagination = useMemo(() => {
+    const complete = paginateRegionRows(rows, regionLayout)
+    // 桌面侧栏高度由地图决定，多页时先为分页按钮留出空间，再计算可见条目
+    return sideBySide && complete.pages.length > 1
+      ? paginateRegionRows(rows, { ...regionLayout, height: regionLayout.height - regionLayout.pagerHeight })
+      : complete
+  }, [rows, regionLayout, sideBySide])
+  const regionPageKey = JSON.stringify([regionLayout, rows.map((row) => [row.group, row.region.key])])
+  const regionPages = pagination.pages.length
+  const nextRegionPage = Math.max(0, pagination.pages.findIndex((page) => page.some((row) => row.region.key === region && (regionGroup === null || row.group === regionGroup))))
+  const [regionPagination, setRegionPagination] = useState({ key: regionPageKey, page: nextRegionPage })
+  if (regionPagination.key !== regionPageKey) setRegionPagination({ key: regionPageKey, page: nextRegionPage })
+  const regionPage = regionPagination.key === regionPageKey ? Math.min(regionPagination.page, regionPages - 1) : nextRegionPage
+  const pageRows = pagination.pages[regionPage]
+  const pageGroups = [...new Set(pageRows.map((row) => row.group))].map((group) => ({ group, rows: pageRows.filter((row) => row.group === group) }))
+  // 窄屏预留最高一页的高度与 4px 行内绘制/焦点余量，末页不跳动且不裁切
+  const regionListHeight = Math.max(32, ...pagination.heights) + 4
+  // 「全部节点」的悬停说明列出无法定位的节点台数
   const unplaced = nodes.length - rows.reduce((sum, row) => sum + row.count, 0)
 
   // 初始视角与上游一致：东经 80°、北纬 30°（亚洲那一面，机器最密的地方）
   const [view, setView] = useState({ lon: 80, lat: 30 })
-  const [flatView, setFlatView] = useState({ lon: 0, lat: 0 })
+  const [flatView, setFlatView] = useState(MAP_DEFAULT_CENTER)
   const [mode, setMode] = useState<MapMode>(savedMode)
   const [rotating, setRotating] = useState(savedRotation)
-  const [sweepTime, setSweepTime] = useState(() => Date.now())
   // 点过侧栏的地区就钉住：不再自转（否则刚飞过去又转走了）
   const [pinned, setPinned] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -109,24 +178,27 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
   // 完整世界不做纬度平移；放大后限制平移范围，避免拖到两极之外留下空白
   const flatLatLimit = Math.max(0, 90 - 90 / (zoom / 100))
   const flatLat = Math.max(-flatLatLimit, Math.min(flatLatLimit, flatView.lat))
-  const [fitHeight, setFitHeight] = useState(320)
   const zoomId = useId()
   const mapClipId = useId()
+  const flowClipId = useId()
+  const flowMaskId = useId()
   const beaconGlowId = useId()
+  const shadeId = useId()
   const choiceId = useId()
+  const regionListId = useId()
   // 画布实际像素尺寸：3D 用来计算标签留白，2D 用来适配完整地图
   const [box, setBox] = useState<{ w: number; h: number } | null>(null)
   const viewport = useMemo(() => mapViewport(box?.w, box?.h), [box])
-  const frame = useMemo(() => mode === "2d"
+  const globeFrame = useMemo(() => globeFlows.length ? globeFlowView(zoomView(zoom, labelCount)) : zoomView(zoom, labelCount), [zoom, labelCount, globeFlows.length])
+  const frame = mode === "2d"
     ? { w: viewport.w, h: viewport.h, cx: viewport.w / 2, cy: viewport.bounds.y + viewport.bounds.h / 2, r: viewport.bounds.w / 2 }
-    : zoomView(zoom, labelCount), [mode, zoom, labelCount, viewport])
+    : globeFrame
   const mapBounds = viewport.bounds
   const reduced = useReducedMotion()
   const pageVisible = useSyncExternalStore(subscribeVisibility, () => !document.hidden)
   // 标签左右侧的记忆：跨帧保留，圆心附近 ±18 的机器才不会左右闪布局函数就地写它
   const sides = useRef(new Map<string, "L" | "R">())
   const host = useRef<HTMLDivElement>(null)
-  const regions = useRef<HTMLDivElement>(null)
   const controls = useRef<HTMLDivElement>(null)
   const choiceHost = useRef<HTMLDivElement>(null)
   const returnFocus = useRef<SVGCircleElement | null>(null)
@@ -157,18 +229,8 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
     const ro = new ResizeObserver(() => {
       const r = el.getBoundingClientRect()
       setBox((prev) => prev?.w === r.width && prev.h === r.height ? prev : { w: r.width, h: r.height })
-      // 量地区内容本身，避免左栏增高后又把伸展的侧栏高度当成新目标，形成循环
-      const list = regions.current
-      const toolbar = controls.current
-      if (list && toolbar && list.parentElement) {
-        const style = getComputedStyle(list.parentElement)
-        const sideHeight = list.getBoundingClientRect().height + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
-        setFitHeight(Math.max(320, Math.min(400, sideHeight - toolbar.getBoundingClientRect().height)))
-      }
     })
     ro.observe(el)
-    if (regions.current) ro.observe(regions.current)
-    if (controls.current) ro.observe(controls.current)
     return () => ro.disconnect()
   }, [])
 
@@ -184,6 +246,7 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
   const located = pinned && region !== null
   const rotationOn = rotating && !located
   const spinning = mode === "3d" && rotating && inView && pageVisible && !dragging && !located && !reduced && !hoveredPoint && !focusedPoint && !choosing
+  const flowPlaying = inView && pageVisible && !reduced && !dragging && !choosing
 
   useEffect(() => {
     if (!spinning) return
@@ -197,8 +260,6 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
       const dt = Math.min(1000, now - last)
       last = now
       setView((v) => ({ ...v, lon: wrapLon(v.lon + dt * 0.0075) }))
-      // 扫掠仅累计实际播放时间；暂停、切换模式和后台时不追赶墙上时间
-      setSweepTime((time) => time + dt)
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
@@ -206,8 +267,9 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button || !e.isPrimary || drag.current) return
-    // ★命中要在 pointerdown 认下来，不能等 click：setPointerCapture 之后浏览器把 click
-    // 的 target 改写成容器，`closest('[data-node]')` 永远返回空
+    // ★ 命中要在这里认下来，不能等 click：下面 `setPointerCapture` 之后，浏览器把 click 的
+    // target 改写成"抓着指针的那个元素"（也就是这个容器），于是 `closest('[data-node]')`
+    // 永远返回空 —— 点针开机器会静默失效（实测过一次，页面什么都不报）
     const pressed = (e.target as Element).closest?.<SVGCircleElement>("[data-node]") ?? null
     // 触屏随后生成的兼容 mousedown 会在选择窗口打开后清掉焦点；仅命中信标时抑制它
     // pointerup/cancel 仍负责点击与拖拽，地图空白区域仍可正常滚动页面
@@ -284,15 +346,15 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
     setHoveredKey((current) => open ? key : current === key ? null : current)
   }
 
-  const pick = (key: string | null, aim?: [number, number]) => {
+  const pick = (key: string | null, aim?: [number, number], group: string | null = null) => {
     // 再点一次同一个地区、或点「全部」= 取消筛选并放它继续自转（上游同此）
-    if (!key || key === region) {
-      onRegion(null)
+    if (!key || (key === region && group === regionGroup)) {
+      onRegion(null, null)
       setPinned(false)
-      if (mode === "2d") setFlatView({ lon: 0, lat: 0 })
+      setFlatView(MAP_DEFAULT_CENTER)
       return
     }
-    onRegion(key)
+    onRegion(key, group)
     if (aim) {
       setView({ lon: wrapLon(aim[0]), lat: clampLat(aim[1]) })
       setFlatView({ lon: wrapLon(aim[0]), lat: Math.max(-flatLatLimit, Math.min(flatLatLimit, aim[1])) })
@@ -314,40 +376,48 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
   }
 
   /**
-   * 画布留白 ★这不是装饰，是**防裁**：SVG 视口就是裁切框，窄屏按宽度贴合时两侧没有空白，
-   * 长名字会被直接裁掉 量出容器实际比例、算出每侧余量，不够就把 viewBox 往两边撑开
-   * （最多各 36，其余长名字省略）
+   * 画布留白 ★ 这不是装饰，是**防裁**：
+   *
+   * SVG 根元素的视口就是它的裁切框，`preserveAspectRatio="xMidYMid meet"` 只在
+   * **容器比画布宽**（桌面那种 830px 宽的格子）时才会在两侧留下空白 —— 那时标签可以
+   * 溢到 viewBox 外面去，上游正是靠这块空白吸收长名字的窄屏（手机上 390 宽、画布
+   * 460）是"按宽度贴合"的，两侧一个像素的空白都没有，于是比 126 个用户单位还长的名字
+   * 会被直接裁掉 —— 屏幕上只看到半句话，页面什么都不会报
+   *
+   * 所以这里量出容器实际比例、算出每侧还剩多少余量，不够就把 viewBox 往两边撑开
+   * （最多各 36，其余长名字省略）缩放后按新圆盘与标签位置重新计算
    */
   // 真量函数：一次量不出来（老浏览器）就整个退回估法，别每帧都试
   const measured = useMemo(() => {
     const probe = measureLabel("W")
     return probe === null ? undefined : (text: string) => measureLabel(text) as number
   }, [])
-  const canvas = useMemo(() => {
-    const plain = { pad: 0, room: Number.POSITIVE_INFINITY, viewBox: `0 0 ${frame.w} ${frame.h}` }
-    if (mode === "2d" || !box || !points.length) return plain
-    const ink = Math.max(0, ...points.flatMap((p) => p.memberLabels.map((member) => Math.max(
-      inkWidthWith(measured, `${member.name} · ${member.code}`),
-      inkWidthWith(measured, `${member.code} · ${member.name}`),
-    ))))
-    const scale = Math.min(box.w / frame.w, box.h / frame.h)
+  const globeCanvas = useMemo(() => {
+    const plain = { pad: 0, room: Number.POSITIVE_INFINITY, viewBox: `0 0 ${globeFrame.w} ${globeFrame.h}` }
+    if (!box || !points.length) return plain
+    const ink = Math.max(0, ...points.map((point) => inkWidthWith(measured, `${point.code} · ${point.region.label}`)))
+    const scale = Math.min(box.w / globeFrame.w, box.h / globeFrame.h)
     // 一侧还剩多少余量（用户单位）：宽屏是"容器比画布宽"留下的空白，窄屏约等于 0
     // 手机按最终 viewBox 宽度决定高度，左右余量只由 pad 提供，避免高度与 pad 相互反馈
-    const room = narrow ? 0 : (box.w / scale - frame.w) / 2
+    const room = narrow ? 0 : (box.w / scale - globeFrame.w) / 2
     // 撑开最多 36：再长宁可截字（见 labelMax），也不能让地球被挤小一圈 ——
     // 460 的画布撑到 532 已经让圆盘小 13%，再多就不是"复刻"那个地球了
     // 标签距边缘的余量会跟随圆盘半径变化；默认是上游的 123
-    const labelEdge = frame.cx - frame.r - 15
+    const labelEdge = globeFrame.cx - globeFrame.r - 15
     const pad = Math.max(0, Math.min(36, ink + 6 - (labelEdge + room)))
     return {
       pad,
       room,
-      viewBox: pad ? `${-pad.toFixed(1)} 0 ${(frame.w + pad * 2).toFixed(1)} ${frame.h}` : `0 0 ${frame.w} ${frame.h}`,
+      viewBox: pad ? `${-pad.toFixed(1)} 0 ${(globeFrame.w + pad * 2).toFixed(1)} ${globeFrame.h}` : `0 0 ${globeFrame.w} ${globeFrame.h}`,
     }
-  }, [mode, box, points, measured, frame, narrow])
+  }, [box, points, measured, globeFrame, narrow])
+  const canvas = mode === "2d"
+    ? { pad: 0, room: Number.POSITIVE_INFINITY, viewBox: `0 0 ${viewport.w} ${viewport.h}` }
+    : globeCanvas
+  // 两种模式共用画布大小；宽屏也为完整的 2:1 世界预留足够高度
+  const sharedHeight = Math.max(260, (box?.w ?? 0) / 2 + 24)
   const mobileHeight = box
-    ? mode === "2d" ? Math.min(250, (box.w - 24) / 2 + 24)
-      : Math.min(250 * frame.h / VIEW.h, box.w * frame.h / (frame.w + canvas.pad * 2))
+    ? Math.max(box.w / 2 + 8, Math.min(250 * globeFrame.h / VIEW.h, box.w * globeFrame.h / (globeFrame.w + globeCanvas.pad * 2)))
     : 180
   // 100% 保留获批信标大小，再按缩放倍率同步核心、光晕和命中区域
   const pixelScale = box && box.w > 0 && box.h > 0
@@ -355,10 +425,17 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
     : 1
   const markerScale = pixelScale * zoom / 100
   /**
-   * 标签至画布边缘的距离加上留白，就是这一行最多能有多宽
-   * ★是 `max(room, pad)` 而不是 `room + pad`：容器比画布高时，撑开的 pad 是从余量里拿的
-   * （相加等于把同一段空白算两遍）；容器比画布宽时 room = 0，撑开的 pad 让整画布等比缩小、
-   * 标签多出 pad 的余量 取 max 两种情况都对；-6 留墨迹余量（描边是 3）
+   * 标签至画布边缘的距离加上留白，就是这一行最多能有多宽 ——
+   * ★ 是 `max(room, pad)`，**不是** `room + pad`（这里踩过一次，`clipped` 那条护栏当时
+   * 因为正则写错静默失效，一直没报）：
+   *
+   *   · 容器比画布**高**（桌面）：缩放由高度定死，撑开 viewBox 只改坐标框、不改缩放，
+   *     但两侧的余量会**正好少掉 pad** —— 撑开的 pad 是从余量里拿的，两者相加等于
+   *     把同一段空白算两遍 可用的就是 `123 + room`
+   *   · 容器比画布**宽**（手机按宽度贴合）：`room = 0`，撑开的 pad 让整个画布（含标签）
+   *     等比缩小，标签反而多出 pad 的余量 —— 可用的是 `123 + pad`
+   *
+   * 取 max 两种情况都对；再用 -6 留一点墨迹余量（描边是 3，见 inkWidthWith）
    */
   const labelMax = frame.cx - frame.r - 15 + Math.max(canvas.room, canvas.pad) - 6
 
@@ -367,26 +444,35 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
   const cam = camera(view.lon, view.lat, frame)
   const flat = flatCamera(flatView.lon, flatLat, zoom, mapBounds)
   const land = mode === "3d" ? landPaths(cam, prep) : mapPaths(flat, flatPrep)
-  const wires = mode === "3d"
-    ? graticule(cam, profile, profile.sweepCount ? sweepLonAt(sweepTime) : null)
-    : []
-  // ★这里读 ref 是有意的：那两个字是**跨帧记忆**——圆心附近 ±18 的机器如果每帧重新判左右，
-  // 标签会在两摞之间来回跳 读它是幂等的
+  const wires = mode === "3d" ? graticule(cam, profile, null) : []
+  const flatPoints = mode === "2d" ? flatNodes(points, flat) : []
+  // ★ 这里读 ref 是有意的，也是这套排布必须的：那两个字是**跨帧记忆**——
+  // 圆心附近 ±18 的机器（正在转到中缝上的那几台）如果每帧重新判左右，标签会在两摞之间
+  // 来回跳 读它是幂等的：同一帧算多少次结果都一样，只是把"上一帧选的那一侧"记下来
   // eslint-disable-next-line react/refs -- 跨帧记忆，见上
   const placed = mode === "3d" ? layoutLabels(cam, points, sides.current, labelMax, frame.cx, measured)
-    : flatNodes(points, flat).filter((point) => point.visible)
+    : flatPoints.filter((point) => point.visible)
+  const globeCenter = mode === "3d" && flowPoint ? globeFlowPoint(cam, flowPoint.ll) : null
+  const flatFlowCenter = flowPoint && flatPoints.find((point) => point.key === flowPoint.key)
+  const flowCenter = globeCenter
+    ? { px: globeCenter.x, py: globeCenter.y }
+    : flatFlowCenter
+  const flowCenterBack = globeCenter !== null && globeCenter.k <= 0.02
+  const flowPaths = mode === "3d" ? globeFlowPaths(globeFlows, cam)
+    : flowNode && flatFlowCenter ? mapFlowPaths(flatPoints, flatFlowCenter, flowNode.online, markerScale, flat) : []
+  const flowBounds = mode === "2d" && flowPaths.length ? flowMapBounds(flat) : null
   // 不同城市的信标仍保留真实位置；重叠点击区按最近中心分开，不再被上层的针盖住
   const hitAreas = mapHitAreas(placed, 9 * markerScale)
   const aim = region ? rows.find((row) => row.region.key === region)?.aim : undefined
   const projectedAim = aim ? (mode === "3d" ? cam.at(aim[0], aim[1]) : flat.at(aim[0], aim[1])) : null
   const marker = projectedAim && (!("visible" in projectedAim) || projectedAim.visible) ? projectedAim : null
-  const flatHome = aim ? { lon: wrapLon(aim[0]), lat: 0 } : { lon: 0, lat: 0 }
+  const flatHome = aim ? { lon: wrapLon(aim[0]), lat: 0 } : MAP_DEFAULT_CENTER
   const zoomResetDisabled = zoom === GLOBE_ZOOM.default && (mode === "3d" || (flatView.lon === flatHome.lon && flatLat === flatHome.lat))
 
   return (
     <Tooltip.Provider delayDuration={0}>
-    <section className="globe-panel" aria-label="节点地图" data-map-mode={mode} data-map-spin={rotating ? "true" : "false"} data-map-spinning={spinning ? "true" : "false"} data-marker-pulse={inView && pageVisible && !reduced ? "true" : "false"}>
-      <div className="globe-main" style={{ "--globe-fit-height": `${fitHeight}px`, "--globe-height-ratio": mode === "2d" ? 1 : frame.h / VIEW.h, "--globe-mobile-height": `${mobileHeight}px` } as CSSProperties}>
+    <section className="globe-panel" aria-label="节点地图" data-map-mode={mode} data-map-spin={rotating ? "true" : "false"} data-map-spinning={spinning ? "true" : "false"} data-marker-pulse={inView && pageVisible && !reduced ? "true" : "false"} data-map-flow-playing={flowPoint ? flowPlaying : undefined}>
+      <div className="globe-main" style={{ "--globe-shared-height": `${sharedHeight}px`, "--globe-mobile-height": `${mobileHeight}px` } as CSSProperties}>
         <div
           ref={host}
           className="globe-atlas"
@@ -398,17 +484,20 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
           onLostPointerCapture={(e) => endDrag(e, false)}
         >
           {/* 装饰层单独隐藏，信标提供有名称的键盘入口与多节点选择 */}
-          <svg data-map-canvas data-sweep-time={sweepTime} data-sweep-longitude={sweepLonAt(sweepTime)} data-camera-longitude={view.lon} data-camera-latitude={view.lat} data-camera-cx={frame.cx} data-camera-cy={frame.cy} data-camera-r={frame.r} viewBox={canvas.viewBox} preserveAspectRatio="xMidYMid meet" role="group" aria-label="地图节点" focusable="false">
+          <svg data-map-canvas data-camera-longitude={mode === "2d" ? flatView.lon : view.lon} data-camera-latitude={mode === "2d" ? flatLat : view.lat} data-camera-cx={frame.cx} data-camera-cy={frame.cy} data-camera-r={frame.r} viewBox={canvas.viewBox} preserveAspectRatio="xMidYMid meet" role="group" aria-label="地图节点" focusable="false">
             <defs>
-              {/* 圆盘里那层明暗：中心几乎透明、边上压到 `--globe-rim`（上游同一套停点） */}
-              <radialGradient id="globe-shade" cx="38%" cy="36%" r="68%">
-                <stop offset="0%" stopColor="currentColor" stopOpacity="0.06" />
-                <stop offset="70%" stopColor="currentColor" stopOpacity="0" />
+              {/* 中央保留与 2D 相同的底色，只在球缘叠加柔和暗影 */}
+              <radialGradient id={shadeId} cx="38%" cy="36%" r="68%">
+                <stop offset="0%" stopColor="var(--globe-rim)" stopOpacity="0" />
+                <stop offset="70%" stopColor="var(--globe-rim)" stopOpacity="0" />
                 <stop offset="100%" stopColor="var(--globe-rim)" stopOpacity="1" />
               </radialGradient>
               <clipPath id={mapClipId}>
                 <rect data-map-bounds x={mapBounds.x} y={mapBounds.y} width={mapBounds.w} height={mapBounds.h} />
               </clipPath>
+              {flowBounds && <clipPath id={flowClipId}>
+                <rect x={flowBounds.x} y={flowBounds.y} width={flowBounds.w} height={flowBounds.h} />
+              </clipPath>}
               {(["online", "offline"] as const).map((state) => (
                 <radialGradient key={state} id={`${beaconGlowId}-${state}`}>
                   <stop offset="0%" stopColor={`var(--globe-pin-${state})`} stopOpacity="0.55" />
@@ -421,22 +510,42 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
             <g aria-hidden="true">
             {mode === "3d" && <>
               <circle className="globe-ocean" cx={frame.cx} cy={frame.cy} r={frame.r} />
-              <circle className="globe-disk" cx={frame.cx} cy={frame.cy} r={frame.r} fill="url(#globe-shade)" />
             </>}
             {land.fill && <path className="globe-land" d={land.fill} />}
             {land.stroke && <path className="globe-coast" d={land.stroke} />}
             {wires.map((wire, i) => (
               <path
                 key={i}
-                className={wire.sweep >= 0 ? "globe-sweep" : "globe-wire"}
+                className="globe-wire"
                 d={wire.d}
                 strokeWidth={wire.width}
-                style={wire.sweep >= 0 ? { strokeOpacity: sweepOpacity(dark, wire.sweep) } : undefined}
               />
             ))}
-            {mode === "3d" && <line className="globe-base" x1={frame.cx - frame.r - 28} y1={frame.h - 20} x2={frame.cx + frame.r + 28} y2={frame.h - 20} />}
+            {mode === "3d" && <circle className="globe-disk" style={{ fill: `url(#${shadeId})` }} cx={frame.cx} cy={frame.cy} r={frame.r} />}
             </g>
+            {flowPaths.length > 0 && (
+              <g aria-hidden="true" clipPath={flowBounds ? `url(#${flowClipId})` : undefined}>
+                {flowPaths.map((path, index) => (
+                  <g key={path.key} className="globe-flow-route" data-map-flow-route={path.key} data-active={path.active}>
+                    {path.front !== undefined && <defs>
+                      <mask id={`${flowMaskId}-${index}`} maskUnits="userSpaceOnUse" x={0} y={0} width={frame.w} height={frame.h}>
+                        <path d={path.front} fill="none" stroke="white" strokeWidth={6 * pixelScale} strokeLinecap="round" strokeLinejoin="round" />
+                      </mask>
+                    </defs>}
+                    {path.back && <path className="globe-flow-track globe-flow-back" d={path.back} />}
+                    <path className="globe-flow-track" d={path.front ?? path.d} />
+                    {path.active && <>
+                      {path.back && <path className="globe-flow-pulse globe-flow-pulse-back" d={path.d} pathLength={100} style={{ animationDelay: `${path.delay}s` }} />}
+                      <path className="globe-flow-pulse" d={path.d} pathLength={100} mask={path.front !== undefined ? `url(#${flowMaskId}-${index})` : undefined} style={{ animationDelay: `${path.delay}s` }} />
+                    </>}
+                  </g>
+                ))}
+              </g>
+            )}
             <g clipPath={mode === "2d" ? `url(#${mapClipId})` : undefined}>
+              {flowCenter && (
+                <circle className="globe-flow-center" data-map-flow-center data-back={flowCenterBack} cx={flowCenter.px} cy={flowCenter.py} r={8.7 * markerScale} aria-hidden="true" />
+              )}
               {marker && (
               <g className="globe-selected" aria-hidden="true">
                 <circle className="globe-selected-ring" cx={marker.x} cy={marker.y} r={7} />
@@ -444,12 +553,25 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
               </g>
               )}
               {placed.map((p, index) => (
-                <Pin key={p.key} p={p} hitArea={hitAreas[index]} members={p.nodeIds.flatMap((id) => { const node = nodeById.get(id); return node ? [node] : [] })} markerScale={markerScale} glowId={beaconGlowId} active={hoveredKey === p.key || focusedKey === p.key} tooltipOpen={hoveredKey === p.key && !dragging && !choosing} choiceId={choiceId} choosing={choiceKey === p.key && choosing} onHover={hoverPoint} onFocus={setFocusedKey} onActivate={activatePoint} onWarm={onWarm} />
+                <Pin
+                  key={p.key}
+                  p={p}
+                  hitArea={hitAreas[index]}
+                  members={p.nodeIds.flatMap((id) => { const node = nodeById.get(id); return node ? [node] : [] })}
+                  markerScale={markerScale}
+                  glowId={beaconGlowId}
+                  active={hoveredKey === p.key || focusedKey === p.key}
+                  tabIndex={focusedKey === p.key || !focusedKey && index === 0 ? 0 : -1}
+                  tooltipOpen={hoveredKey === p.key && !dragging && !choosing}
+                  choiceId={choiceId}
+                  choosing={choiceKey === p.key && choosing}
+                  onHover={hoverPoint}
+                  onFocus={setFocusedKey}
+                  onActivate={activatePoint}
+                  onWarm={onWarm}
+                />
               ))}
             </g>
-            {mode === "3d" && <text className="globe-caption" aria-hidden="true" x={frame.cx} y={frame.h - 8} textAnchor="middle">
-              {globeCaption(view.lon, view.lat, profile.key)}
-            </text>}
           </svg>
         </div>
         <div ref={controls} className="globe-toolbar">
@@ -514,40 +636,65 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
       </Dialog.Root>
 
       <aside className="globe-side">
-        <div ref={regions} className="globe-regions">
-          <div className="globe-side-title">
-            地区{located ? " · 已定位" : ""}
-          </div>
-          <button
-            type="button"
-            className="globe-reg globe-reg-all"
-            aria-pressed={!region}
-            onClick={() => pick(null)}
-            title={unplaced > 0 ? `共 ${nodes.length} 台，其中 ${unplaced} 台认不出国家（不上地球与地区列表）` : `共 ${nodes.length} 台`}
-          >
-            <span>全部</span>
-            <b>{nodes.length}</b>
-          </button>
-          {rows.map((row) => (
+        <div ref={regionHost} className="globe-side-inner" style={{ "--globe-region-list-height": `${regionListHeight}px` } as CSSProperties}>
+          <div id={regionListId} className="globe-regions" data-region-page={regionPage + 1} data-region-pages={regionPages} data-region-total={rows.length}>
+            <h2 className="globe-side-title">
+              <span>地区分布</span>
+              {located && <span className="globe-side-status">已定位</span>}
+              <span className="globe-side-count">{rows.length}</span>
+            </h2>
             <button
-              key={row.region.key}
               type="button"
-              className="globe-reg"
-              data-region-code={row.region.code}
-              aria-pressed={region === row.region.key}
-              onClick={() => pick(row.region.key, row.aim)}
-              title={`${row.region.label} · ${row.region.code} · ${row.count} 台${row.offline > 0 ? ` · ${row.offline} 台离线` : ""}`}
+              className="globe-reg globe-reg-all"
+              aria-pressed={!region}
+              onClick={() => pick(null)}
+              title={unplaced > 0 ? `共 ${nodes.length} 台，其中 ${unplaced} 台认不出国家（不上地球与地区列表）` : `共 ${nodes.length} 台`}
             >
-              <span>
-                <RegionFlag code={row.region.code} />
-                {row.region.label}
-              </span>
-              <b>
-                {row.count}
-                {row.offline > 0 && <i className="globe-reg-dot" aria-hidden="true" />}
-              </b>
+              <span>全部节点</span>
+              <b>{nodes.length}</b>
             </button>
-          ))}
+            <div className="globe-region-groups">
+              {pageGroups.map(({ group, rows }) => (
+                <section className="globe-region-group" key={group} aria-label={group || "未分组"}>
+                  <h3 className="globe-region-group-title" title={group || "未分组"}>{group || "未分组"}</h3>
+                  <div className="globe-region-grid">
+                    {rows.map((row) => (
+                      <button
+                        key={row.region.key}
+                        type="button"
+                        className="globe-reg"
+                        data-region-code={row.region.code}
+                        data-region-key={row.region.key}
+                        data-region-group={group}
+                        aria-pressed={region === row.region.key && (regionGroup === null || regionGroup === group)}
+                        onClick={() => pick(row.region.key, row.aim, group)}
+                        title={`${group || "未分组"} · ${row.region.label} · ${row.region.code} · ${row.count} 台${row.offline > 0 ? ` · ${row.offline} 台离线` : ""}`}
+                      >
+                        <span>
+                          <RegionFlag code={row.region.code} />
+                          {row.region.label}
+                        </span>
+                        <b>
+                          {row.count}
+                          {row.offline > 0 && <i className="globe-reg-dot" aria-hidden="true" />}
+                        </b>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))}
+              {rows.length === 0 && <p className="text-xs text-muted-foreground">暂无可定位的地区</p>}
+            </div>
+          </div>
+          {regionPages > 1 && <nav className="globe-region-pager" aria-label="地区分页">
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="上一页地区" aria-controls={regionListId} disabled={regionPage === 0} onClick={() => setRegionPagination({ key: regionPageKey, page: regionPage - 1 })}>
+              <ChevronLeft aria-hidden="true" />
+            </Button>
+            <span className="tnum" aria-live="polite" aria-atomic="true">{regionPage + 1} / {regionPages} 页</span>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label="下一页地区" aria-controls={regionListId} disabled={regionPage === regionPages - 1} onClick={() => setRegionPagination({ key: regionPageKey, page: regionPage + 1 })}>
+              <ChevronRight aria-hidden="true" />
+            </Button>
+          </nav>}
         </div>
       </aside>
     </section>
@@ -558,15 +705,16 @@ export function Globe({ nodes, dark, region, onRegion, onOpen, onWarm }: {
 /**
  * 100% 时的柔光信标：核心 6.4px、外圈 11.52px（含描边）、光晕 15.04px，随缩放同步变化
  * 在线绿芯绿圈，离线红芯红圈带短横，部分离线绿芯红圈；核心常亮且不描黑边
- * 3D 每个成员各有引线与标签，2D 仅画标记；每个地点只有一个命中区域
+ * 3D 每个地点一条引线及标签，2D 仅画标记；每个地点只有一个命中区域
  */
-function Pin({ p, hitArea, members, markerScale, glowId, active, tooltipOpen, choiceId, choosing, onHover, onFocus, onActivate, onWarm }: {
+function Pin({ p, hitArea, members, markerScale, glowId, active, tabIndex, tooltipOpen, choiceId, choosing, onHover, onFocus, onActivate, onWarm }: {
   p: Placed | FlatNode
   hitArea: string
   members: Node[]
   markerScale: number
   glowId: string
   active: boolean
+  tabIndex: number
   tooltipOpen: boolean
   choiceId: string
   choosing: boolean
@@ -602,7 +750,7 @@ function Pin({ p, hitArea, members, markerScale, glowId, active, tooltipOpen, ch
         {label.label}
       </text>)}
       <Tooltip.Trigger asChild>
-        <circle className="hit" cx={cx} cy={cy} r={9 * markerScale} clipPath={`url(#${hitClipId})`} fill="transparent" data-node={p.id} data-pin-key={p.key} data-index={p.index} data-region={p.region.key} data-online={p.online ? "1" : "0"} data-count={p.count} data-offline-count={p.offlineCount} data-marker-state={state} role="button" tabIndex={0} focusable="true" aria-label={title} aria-haspopup={p.count > 1 ? "dialog" : undefined} aria-expanded={p.count > 1 ? choosing : undefined} aria-controls={choosing ? choiceId : undefined}
+        <circle className="hit" cx={cx} cy={cy} r={9 * markerScale} clipPath={`url(#${hitClipId})`} fill="transparent" data-node={p.id} data-pin-key={p.key} data-index={p.index} data-region={p.region.key} data-online={p.online ? "1" : "0"} data-count={p.count} data-offline-count={p.offlineCount} data-marker-state={state} role="button" tabIndex={tabIndex} focusable="true" aria-label={title} aria-haspopup={p.count > 1 ? "dialog" : undefined} aria-expanded={p.count > 1 ? choosing : undefined} aria-controls={choosing ? choiceId : undefined}
           onPointerEnter={(event) => {
             // 相邻信标直接切换，避免旧 Tooltip 的缓冲区阻止新信标打开提示
             if (event.pointerType !== "touch") onHover(p.key, true)
@@ -614,6 +762,15 @@ function Pin({ p, hitArea, members, markerScale, glowId, active, tooltipOpen, ch
             if (event.currentTarget.matches(":focus-visible")) onHover(p.key, true)
           }} onBlur={() => onFocus(null)}
           onKeyDown={(event) => {
+            if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(event.key)) {
+              const pins = [...event.currentTarget.closest("svg")!.querySelectorAll<SVGCircleElement>("circle[data-pin-key]")]
+              const current = pins.indexOf(event.currentTarget)
+              const forward = event.key === "ArrowRight" || event.key === "ArrowDown"
+              const next = event.key === "Home" ? 0 : event.key === "End" ? pins.length - 1 : (current + (forward ? 1 : -1) + pins.length) % pins.length
+              event.preventDefault()
+              pins[next]?.focus()
+              return
+            }
             if (event.key !== "Enter" && event.key !== " ") return
             event.preventDefault()
             if (!event.repeat) onActivate(p.key, event.currentTarget)
@@ -658,6 +815,7 @@ function RegionFlag({ code }: { code: string }) {
 }
 
 const NARROW = matchMedia("(max-width: 720px)")
+const SIDE_BY_SIDE = matchMedia("(min-width: 900px)")
 const REDUCE = matchMedia("(prefers-reduced-motion: reduce)")
 
 function subscribe(query: MediaQueryList, notify: () => void) {

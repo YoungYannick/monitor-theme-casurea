@@ -7,7 +7,7 @@ import { TextHighlight } from "@/components/TextHighlight"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { Node } from "@/lib/api"
 import type { RemarkPlacement } from "@/lib/site-settings"
-import { FOREVER, CYCLES, bytes, daysUntil, money, osName, pair, percent, rate } from "@/lib/format"
+import { FOREVER, cycleLabel, bytes, daysUntil, money, osName, pair, percent, rate } from "@/lib/format"
 
 /**
  * 「紧凑」形态：一行一台机器的表格，同样高度排得下两三倍的机器
@@ -41,7 +41,7 @@ import { FOREVER, CYCLES, bytes, daysUntil, money, osName, pair, percent, rate }
  * 没有上限（流量不限）就留空，与 Meter 对 null 一致
  */
 function Bar({ pct }: { pct: number | null }) {
-  const filled = pct === null ? 0 : Math.min(100, Math.max(0, pct))
+  const filled = pct === null || !Number.isFinite(pct) ? 0 : Math.min(100, Math.max(0, pct))
   return (
     <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
       <div className="h-full rounded-full bg-foreground/70 transition-[width] duration-500" style={{ width: `${filled}%` }} />
@@ -168,18 +168,14 @@ function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, re
   // 已部署但掉线：整行挂离线标记（未接入的不算，见 index.css 的 .offline-row）
   const offline = !node.online && deployed(node)
   // 续费价与计费周期：与「详细」卡片同一套读法（金额 + 周期），只是压在一个格子里
-  const cycle = CYCLES[node.billing_cycle] ?? (node.billing_cycle || null)
+  const cycle = cycleLabel(node.billing_cycle)
 
   return (
     <>
       <tr
-        role="button"
-        aria-expanded={open}
-        tabIndex={0}
         data-node-card={node.id}
         data-selected={selected ? "1" : undefined}
         onClick={onToggle}
-        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onToggle())}
         onPointerOver={onWarm}
         onFocus={onWarm}
         onTouchStart={onWarm}
@@ -188,11 +184,11 @@ function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, re
         {/* 名称列不写宽度、不居中：定宽表把余量全给它
             折角 → 国旗 → 名字：折角是「点得进去」的提示，展开时转成朝下；搜索命中片段描色 */}
         <td className="px-3 py-2 align-middle">
-          <span className="flex min-w-0 items-center gap-2">
+          <button type="button" aria-expanded={open} aria-label={`${open ? "收起" : "展开"}${node.name}的延迟图`} className="flex w-full min-w-0 items-center gap-2 rounded-sm text-left focus-visible:outline-2 focus-visible:outline-ring">
             <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground/60 transition-transform ${open ? "rotate-90" : ""}`} />
             <Country node={node} />
             <span className="truncate text-sm font-medium"><TextHighlight text={node.name} terms={terms} /></span>
-          </span>
+          </button>
         </td>
         <td className={`${colCls("os")} ${CELL} ${node.os ? "" : "text-muted-foreground"}`}>
           <span className="block truncate">{node.os ? osName(node.os) : "—"}</span>

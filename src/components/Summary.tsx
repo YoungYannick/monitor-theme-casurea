@@ -3,10 +3,12 @@ import { ArrowDown, ArrowUp } from "lucide-react"
 import { Tooltip } from "radix-ui"
 
 import { Card } from "@/components/ui/card"
+import { DetailScroll } from "@/components/DetailScroll"
+import { TrafficDetail } from "@/components/TrafficDetail"
 import { InfoTooltip } from "@/components/InfoTooltip"
 import type { Node } from "@/lib/api"
 import { bytes, daysUntil, rate } from "@/lib/format"
-import { budgetOf, cny, fxNote, parseRateOverrides, type BudgetItem } from "@/lib/money"
+import { budgetOf, cny, fxNote, isExcludedByTag, parseRateOverrides, type BudgetItem } from "@/lib/money"
 import { useExchangeRates } from "@/lib/use-exchange-rates"
 import { summarize, type Fleet } from "@/lib/summary"
 import { speedSeriesOf } from "@/lib/speed-history"
@@ -51,6 +53,26 @@ function Block({ title, hint, detail, onOpen, children }: {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement | null>(null)
   const interactive = onOpen !== undefined || detail !== undefined
+  const [placement, setPlacement] = useState({ above: false, left: 0, maxHeight: 320 })
+  useLayoutEffect(() => {
+    if (!open) return
+    const anchor = ref.current
+    const popup = anchor?.querySelector<HTMLElement>("[data-budget-detail]")
+    if (!anchor || !popup) return
+    const place = () => {
+      const bounds = anchor.getBoundingClientRect()
+      const below = window.innerHeight - bounds.bottom - 16
+      const above = below < 180 && bounds.top > below
+      const next = { above, left: Math.min(0, window.innerWidth - 16 - bounds.left - popup.offsetWidth), maxHeight: Math.max(120, above ? bounds.top - 16 : below) }
+      setPlacement((previous) => previous.above === next.above && previous.left === next.left && previous.maxHeight === next.maxHeight ? previous : next)
+    }
+    place()
+    const observer = new ResizeObserver(place)
+    observer.observe(popup)
+    window.addEventListener("resize", place)
+    window.addEventListener("scroll", place, true)
+    return () => { observer.disconnect(); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true) }
+  }, [open])
   // 开着的浮层：点别处 / Esc 收起（与 NodeCard 那枚浮层同一个做法）
   useEffect(() => {
     if (!open) return
@@ -74,12 +96,14 @@ function Block({ title, hint, detail, onOpen, children }: {
         onPointerEnter={detail ? (e) => { if (e.pointerType === "mouse") setOpen(true) } : undefined}
         onPointerLeave={detail ? (e) => { if (e.pointerType === "mouse") setOpen(false) } : undefined}
         onFocus={detail ? () => setOpen(true) : undefined}
-        onBlur={detail ? () => setOpen(false) : undefined}
+        onBlur={detail ? (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false) } : undefined}
         onClick={onOpen ?? (detail ? () => setOpen(true) : undefined)}
-        onKeyDown={onOpen ? (e) => {
+        onKeyDown={interactive ? (e) => {
+          if (e.target !== e.currentTarget) return
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault()
-            onOpen()
+            if (onOpen) onOpen()
+            else setOpen((current) => !current)
           }
         } : undefined}
       >
@@ -89,7 +113,7 @@ function Block({ title, hint, detail, onOpen, children }: {
           // 浮层紧贴块底（不留 mt 空隙）：指针从块移进浮层的路上才不会触发 pointerleave 闪关；
           // 上限高 + 内部滚动写在 index.css 的 .budget-detail 里——近百行明细也在这一个
           // 浮层里滚着看，不会把浮层拖出屏幕
-          <span data-budget-detail="" className="budget-detail absolute left-0 top-full z-20 block w-max max-w-[15rem] space-y-1 rounded-md border bg-popover px-2.5 py-2 text-xs shadow-md">
+          <span data-budget-detail="" style={{ left: placement.left, top: placement.above ? undefined : "100%", bottom: placement.above ? "100%" : undefined, maxHeight: placement.maxHeight }} className="budget-detail absolute z-20 flex w-max max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-md border bg-popover text-xs shadow-md">
             {detail}
           </span>
         )}
@@ -100,19 +124,13 @@ function Block({ title, hint, detail, onOpen, children }: {
 
 /** 预算卡两枚浮层的内容：逐台明细（金额降序，与 budgetOf 的明细同序）+ 口径行 */
 function BudgetDetail({ head, items, note }: { head: string; items: BudgetItem[]; note: string }) {
-  return (
-    <>
-      {/* 表头带上条数（「各节点月摊 · 87 台」）：浮层能滚了之后，第一眼就知道一共有多少台 */}
-      <span className="block text-muted-foreground">{head} · {items.length} 台</span>
-      {items.map((item, i) => (
-        <span key={i} data-budget-row="" className="flex items-baseline justify-between gap-3">
-          <span className="min-w-0 truncate">{item.name}</span>
-          <span className="tnum shrink-0">≈{cny(item.amount)}</span>
-        </span>
-      ))}
-      <span className="block border-t pt-1 text-muted-foreground">{note}</span>
-    </>
-  )
+  return <>
+    <span className="block border-b px-2.5 py-1.5 text-muted-foreground">{head} · {items.length} 台</span>
+    <DetailScroll>{items.map((item, index) => <span key={index} data-budget-row="" className="flex items-baseline justify-between gap-3">
+      <span className="min-w-0 truncate">{item.name}</span><span className="tnum shrink-0">≈{cny(item.amount)}</span>
+    </span>)}</DetailScroll>
+    <span className="block max-w-sm border-t px-2.5 py-1.5 text-muted-foreground">{note}</span>
+  </>
 }
 
 /**
@@ -294,6 +312,7 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
   const fleet = summarize(nodes)
   const custom = useMemo(() => parseRateOverrides(exchangeRates), [exchangeRates])
   const needsFx = finance && nodes.some((node) => {
+    if (isExcludedByTag(node, excludeTag)) return false
     const code = (node.currency || "").trim().toUpperCase()
     return Number.isFinite(node.price) && node.price > 0 && node.billing_cycle !== "once" && code !== "CNY" && !Object.hasOwn(custom.rates, code)
   })
@@ -376,7 +395,7 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
       )}
 
       <Tile>
-        <Block title="今日流量">
+        <Block title="今日流量" detail={nodes.length ? <TrafficDetail nodes={nodes} /> : undefined}>
           {/* 大数一行（今日上下行），累计并成一行小字——参考站整张卡就是「小标签 / 大数 /
               一行小字」三段，这样四张卡等高、整行才是一个节奏 四个数一个没少
               栅格间距沿用 `gap-x-2`（与 Pair 同一个值）：整行四张卡的第二列因此落在同一条

@@ -48,16 +48,16 @@
   /* 进度条按"越满越危险"上色，所以这里有真正的绿与琥珀：单色阶表达不了严重度 */
   --ok: oklch(0.6 0.15 155);
   --warn: oklch(0.62 0.15 70);
-  /* 节点地球那三块颜色（见 index.css 末尾的 .globe-*）：海面与陆地的淡染、圆盘边缘
-     的暗影 数值取自上游的亮色一套 —— 它是暖纸底，本站是近白底，所以
-     透明度各抬了一点，否则淡到看不见
-     ★**陆地必须比海面明显暗**：0.16 / 0.18 这两档实测**亮度几乎相同**（228.5 对 228.8），
-     只靠冷暖分开 —— 于是哪一块看起来像「灰块」全看它周围有什么（挨着海岸线的那片海
-     会被深色描边衬成灰、大片陆地内部反倒显得白），站长看到的就是「灰白互换」
-     现在陆地压到 0.30、海面提到 0.12：亮度差 32（205 对 237），远近都不会再认错 */
-  --globe-ocean: rgba(72, 118, 136, 0.12);
-  --globe-land: rgba(118, 86, 40, 0.3);
-  --globe-rim: rgba(42, 33, 20, 0.2);
+  /* 地图沿用主题灰阶，陆地与海面通过明度区分，流向与中心圈使用正文色系 */
+  --globe-ocean: var(--muted);
+  --globe-land: color-mix(in oklch, var(--foreground) 20%, var(--card));
+  --globe-coast: var(--muted-foreground);
+  --globe-outline: var(--ring);
+  --globe-grid: var(--border);
+  --globe-rim: rgba(0, 0, 0, 0.2);
+  --globe-flow: color-mix(in oklch, var(--foreground) 75%, var(--card));
+  --globe-flow-pulse: var(--foreground);
+  --globe-flow-center: var(--foreground);
   --globe-pin-online: #26794f;
   --globe-pin-offline: #b94e4f;
   --globe-pin-detail: #fff0ec;
@@ -98,12 +98,8 @@
   --chart-9: oklch(0.72 0.16 335);
   --ok: oklch(0.74 0.14 155);
   --warn: oklch(0.8 0.13 75);
-  /* 深色这一套的底色与上游逐值相同（它的暗底就是 oklch(0.145) 那一档，跟本站几乎同色）
-     ★透明度同亮色那套的理由调过：0.14 / 0.15 的亮度差只有 2.8（33.9 对 31.1），暗底上
-     更是分不出陆海；现在陆地 0.26、海面 0.12，亮度差 23.5（51.1 对 27.6）
-     暗色里**陆地比海面亮**（亮色里相反）—— 暗底上的「实心」块本来就该更亮，与亮色同一套直觉 */
-  --globe-ocean: rgba(86, 138, 160, 0.12);
-  --globe-land: rgba(186, 154, 102, 0.26);
+  /* 暗色陆地比海面亮，岸线与流向复用主题弱化文字色 */
+  --globe-flow: var(--muted-foreground);
   --globe-rim: rgba(8, 8, 8, 0.36);
   --globe-pin-online: #7dd49e;
   --globe-pin-offline: #e98b84;
@@ -262,7 +258,7 @@ input[type="checkbox"]:focus-visible {
   color: var(--card-foreground);
 }
 @media (min-width: 900px) {
-  .globe-panel { grid-template-columns: 1.35fr 0.65fr; }
+  .globe-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .globe-main {
@@ -271,12 +267,12 @@ input[type="checkbox"]:focus-visible {
   flex-direction: column;
   justify-content: center;
   min-width: 0;
-  padding-bottom: 52px;
+  padding-bottom: 44px;
 }
 .globe-atlas {
   position: relative;
   flex: none;
-  height: calc(320px * var(--globe-height-ratio, 1));
+  height: var(--globe-shared-height, 260px);
   overflow: hidden;
   cursor: grab;
   /* 只让出竖向：手机上在地球上竖着划是滚页面（见组件注释），横着划才是转地球 */
@@ -284,11 +280,8 @@ input[type="checkbox"]:focus-visible {
   user-select: none;
   -webkit-user-select: none;
 }
-@media (min-width: 900px) {
-  .globe-atlas { height: calc(var(--globe-fit-height, 320px) * var(--globe-height-ratio, 1)); }
-}
 .globe-atlas[data-drag="true"] { cursor: grabbing; }
-/* 手机高度贴合投影、成员标签与底注，去掉固定高盒产生的上下空白；控件仍独立占位 */
+/* 手机高度贴合投影和地点标签，去掉固定高盒产生的上下空白；控件仍独立占位 */
 @media (max-width: 720px) {
   .globe-atlas { height: var(--globe-mobile-height, 180px); }
 }
@@ -299,15 +292,15 @@ input[type="checkbox"]:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  height: 52px;
-  padding: 10px 12px;
+  height: 44px;
+  padding: 6px 12px;
+  color: var(--muted-foreground);
 }
 .globe-map-controls {
   display: flex;
   flex: none;
   align-items: center;
   gap: 4px;
-  color: var(--muted-foreground);
 }
 .globe-mode-button, .globe-spin-button { font-size: 12px; padding-inline: 8px; white-space: nowrap; }
 .globe-mode-button[aria-pressed="true"] { background: var(--accent); }
@@ -341,8 +334,8 @@ input[type="checkbox"]:focus-visible {
 .globe-controls output { min-width: 40px; font-size: 12px; text-align: right; }
 .globe-zoom-reset { padding-inline: 8px; font-size: 12px; }
 @media (max-width: 1199px) {
-  .globe-main { padding-bottom: 60px; }
-  .globe-toolbar { height: 60px; gap: 8px; }
+  .globe-main { padding-bottom: 52px; }
+  .globe-toolbar { height: 52px; gap: 8px; }
   .globe-mode-label, .globe-spin-label { display: none; }
   .globe-mode-button, .globe-spin-button, .globe-zoom-button, .globe-zoom-reset { width: 32px; min-width: 32px; height: 40px; flex: none; padding-inline: 4px; }
   .globe-controls { gap: 4px; }
@@ -365,12 +358,34 @@ input[type="checkbox"]:focus-visible {
 
 .globe-ocean { fill: var(--globe-ocean); }
 .globe-land { fill: var(--globe-land); stroke: none; stroke-linejoin: round; stroke-linecap: round; }
-.globe-coast { fill: none; stroke: var(--foreground); stroke-width: 0.55; stroke-opacity: 0.36; }
-.globe-disk { fill: url(#globe-shade); stroke: var(--foreground); stroke-width: 1.05; stroke-opacity: 0.42; }
-.globe-wire { fill: none; stroke: var(--foreground); stroke-opacity: 0.1; }
-.globe-sweep { fill: none; stroke: var(--foreground); }
-.globe-base { stroke: var(--foreground); stroke-opacity: 0.4; stroke-width: 1; }
-.globe-stem { fill: none; stroke: var(--foreground); stroke-width: 0.75; }
+.globe-coast { fill: none; stroke: var(--globe-coast); stroke-width: 0.55; }
+.globe-disk { fill: url(#globe-shade); stroke: var(--globe-outline); stroke-width: 0.85; }
+.globe-wire { fill: none; stroke: var(--globe-grid); }
+.globe-stem { fill: none; stroke: var(--muted-foreground); stroke-width: 0.75; stroke-opacity: 0.65; }
+
+.globe-flow-track, .globe-flow-pulse, .globe-flow-center {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.globe-flow-track { stroke: var(--globe-flow); stroke-width: 1.05px; opacity: 0.84; }
+.globe-flow-back { stroke-dasharray: 3 4; opacity: 0.4; }
+.globe-flow-route[data-active="false"] { opacity: 0.48; }
+.globe-flow-pulse {
+  stroke: var(--globe-flow-pulse);
+  stroke-width: 2px;
+  stroke-dasharray: 1.25 110;
+  animation: globe-flow-travel 3.4s linear infinite paused;
+}
+.globe-panel[data-map-flow-playing="true"] .globe-flow-pulse { animation-play-state: running; }
+.globe-flow-pulse-back { opacity: 0.28; }
+@keyframes globe-flow-travel { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -100; } }
+.globe-flow-center { stroke: var(--globe-flow-center); stroke-width: 1.3px; }
+.globe-flow-center[data-back="true"] { stroke-dasharray: 2.5 3; opacity: 0.65; }
+@media (prefers-reduced-motion: reduce) {
+  .globe-flow-pulse { display: none; }
+}
 /* 同一套柔光信标用于 2D/3D；部分离线用绿芯红圈，离线再加短横，核心始终常亮 */
 .globe-beacon { --beacon-color: var(--globe-pin-offline); }
 .globe-beacon[data-marker-state="online"] { --beacon-color: var(--globe-pin-online); }
@@ -448,36 +463,89 @@ input[type="checkbox"]:focus-visible {
   paint-order: stroke;
   stroke-linejoin: round;
 }
-.globe-caption {
-  fill: var(--muted-foreground);
-  font-family: ui-monospace, SFMono-Regular, "IBM Plex Mono", monospace;
-  font-size: 8.8px;
-  letter-spacing: 1.4px;
-  opacity: 0.55;
-}
 
 .globe-side {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  padding: 14px 16px;
+  padding: 10px 16px;
   border-top: 1px solid var(--border);
   font-size: 13px;
 }
 .globe-regions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-content: start;
-  gap: 8px 18px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  gap: 6px;
 }
+.globe-side-inner { display: flex; flex-direction: column; min-height: 0; }
+.globe-region-groups {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  gap: 10px;
+  height: var(--globe-region-list-height, 32px);
+  min-height: 0;
+  overflow: hidden;
+  overflow: clip;
+}
+.globe-region-group { flex: none; min-width: 0; }
+.globe-region-group-title {
+  height: 24px;
+  margin-bottom: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 24px;
+}
+.globe-region-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; padding-left: 10px; }
+@media (min-width: 721px) {
+  .globe-region-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.globe-region-pager {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 8px;
+  min-height: 40px;
+  flex: none;
+  color: var(--muted-foreground);
+}
+.globe-region-pager span { min-width: 64px; text-align: center; font-size: 12px; }
 @media (min-width: 900px) {
-  .globe-side { border-top: 0; border-left: 1px solid var(--border); }
+  .globe-side { position: relative; padding: 0; border-top: 0; border-left: 1px solid var(--border); }
+  .globe-side-inner { position: absolute; inset: 10px 16px; }
+  .globe-region-groups { flex: 1; height: auto; }
 }
-.globe-side-title { grid-column: 1 / -1; color: var(--muted-foreground); }
+.globe-side-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  height: 28px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+.globe-side-status { color: var(--muted-foreground); font-size: 11px; font-weight: 400; }
+.globe-side-count { margin-inline-start: auto; font-size: 13px; }
 .globe-reg {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   width: 100%;
+  min-width: 0;
+  min-height: 20px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -488,19 +556,19 @@ input[type="checkbox"]:focus-visible {
   cursor: pointer;
 }
 .globe-reg:hover { color: var(--foreground); }
-/* 「全部」独占一整行：它是一条汇总（本分组一共几台），跟具体地区并排会读成"第一个地区"；
-   而两列的地区列表本来就要从它下面开始排 */
+/* 「全部节点」常驻；各分组标题独占一行，下面按两列/三列排列该分组的地区 */
 /* ★ 地区行撑到 32（≈7mm）**只留给窄屏**：面板在那里是上下两段、手指操作，20px（4mm）
-   点不准（WCAG 2.2 的硬线是 24） 桌面用鼠标 —— 站长 2026-10-07 看过桌面之后说
+   点不准（WCAG 2.2 的硬线是 24）桌面用鼠标 —— 站长 2026-10-07 看过桌面之后说
    「电脑端的地区显示改回原来那样」，于是这里按 900px 那道坎分开：桌面维持原来的行高
-   窄屏才撑高 行与行之间留着 .globe-side 的 8px gap，
-   命中区不会叠到邻居身上（撑高后命中 40，正好等于行高 32 + 行距 8） */
+   窄屏才撑高，行与行之间仍保留独立间隔 */
 @media (max-width: 899px) {
   .globe-reg { min-height: 32px; }
+  .globe-region-pager { min-height: 48px; }
+  .globe-region-pager button { width: 40px; height: 40px; }
 }
-.globe-reg-all { grid-column: 1 / -1; }
+.globe-reg-all { flex: none; }
 .globe-reg span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.globe-reg b { color: var(--foreground); font-weight: 500; font-variant-numeric: tabular-nums; }
+.globe-side-count, .globe-reg b { color: var(--foreground); font-weight: 500; font-variant-numeric: tabular-nums; }
 /* 地区行上的「有机器离线」小点：这台地区里有离线时挂在台数后面（全在线不出现），
    悬停的 title 里写着「N 台 · M 台离线」颜色跟针同一族的琥珀色 */
 .globe-reg-dot {
@@ -574,3 +642,11 @@ input[type="checkbox"]:focus-visible {
 .tap-y-6::before { inset: -10px 0; }
 .globe-reg { position: relative; }
 .globe-reg::before { content: ""; position: absolute; inset: -4px 0; border-radius: 4px; }
+
+/* Summary detail panels keep their heading and notes outside the scrollable list. */
+.budget-detail { width: max-content; max-width: min(28rem, calc(100vw - 2rem)); overflow-y: hidden; }
+.detail-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--muted-foreground) transparent; }
+.detail-scroll[data-detail-more] { mask-image: linear-gradient(to bottom, black calc(100% - 14px), transparent); }
+.detail-scroll::-webkit-scrollbar { width: 5px; }
+.detail-scroll::-webkit-scrollbar-thumb { border-radius: 6px; background: var(--muted-foreground); }
+.detail-scroll::-webkit-scrollbar-track { background: transparent; }

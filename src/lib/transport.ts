@@ -7,10 +7,11 @@ export class ApiError extends Error {
   }
 }
 
-export const REQUEST_TIMEOUT_MS = 15_000
+export const REQUEST_TIMEOUT_MS = 12_000
+export const API_TIMEOUTS = { fast: REQUEST_TIMEOUT_MS, slow: 30_000 }
 
 /** 截止时间覆盖响应体的读取，并保留调用方自己的取消 */
-export async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {
+async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   if (init?.body != null && !headers.has("content-type")) headers.set("content-type", "application/json")
   const controller = new AbortController()
@@ -20,7 +21,7 @@ export async function requestJSON<T>(url: string, init?: RequestInit): Promise<T
   else signal?.addEventListener("abort", cancel, { once: true })
   const deadline = setTimeout(() => {
     controller.abort(new DOMException("请求超时，请重试", "TimeoutError"))
-  }, REQUEST_TIMEOUT_MS)
+  }, /\/metrics\?/.test(url) ? API_TIMEOUTS.slow : API_TIMEOUTS.fast)
   try {
     const res = await fetch(url, { ...init, headers, signal: controller.signal })
     if (!res.ok) throw new ApiError(res.status, (await res.text()) || res.statusText || `HTTP ${res.status}`)
@@ -31,6 +32,28 @@ export async function requestJSON<T>(url: string, init?: RequestInit): Promise<T
   } finally {
     clearTimeout(deadline)
     signal?.removeEventListener("abort", cancel)
+  }
+}
+
+/** Only idempotent reads retry transient network errors or a busy Hub. */
+export async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {
+  const readable = !init?.method || init.method.toUpperCase() === "GET" || init.method.toUpperCase() === "HEAD"
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetchJSON<T>(url, init)
+    } catch (error) {
+      const transient = error instanceof ApiError
+        ? [429, 500, 502, 503, 504].includes(error.status)
+        : error instanceof TypeError || error instanceof DOMException && error.name === "TimeoutError"
+      if (!readable || !transient || attempt >= 1 || init?.signal?.aborted) throw error
+      await new Promise<void>((resolve, reject) => {
+        const signal = init?.signal
+        const cancel = () => { clearTimeout(timer); reject(signal?.reason) }
+        const timer = setTimeout(() => { signal?.removeEventListener("abort", cancel); resolve() }, 350)
+        if (signal?.aborted) cancel()
+        else signal?.addEventListener("abort", cancel, { once: true })
+      })
+    }
   }
 }
 
@@ -47,6 +70,7 @@ type TransportOptions<T> = {
   parseMessage(data: string): T
   receive(data: T): void
   fail(error: unknown): void
+  streamState?(connected: boolean): void
   /** 时钟与随机数可注入：单测才能复现连接停滞与恢复 */
   schedule?: (callback: () => void, delay: number) => () => void
   random?: () => number
@@ -72,6 +96,13 @@ export function startNodeTransport<T>(options: TransportOptions<T>): () => void 
   let watchdog: (() => void) | null = null
   let failures = 0
   let revision = 0
+  let grace: (() => void) | null = schedule(() => {
+    grace = null
+    if (!streaming) options.streamState?.(false)
+  }, 3000)
+  const disconnected = () => {
+    if (!grace) options.streamState?.(false)
+  }
 
   const fetchOnce = async () => {
     if (disposed || streaming || pending) return
@@ -102,6 +133,7 @@ export function startNodeTransport<T>(options: TransportOptions<T>): () => void 
     current.onmessage = current.onerror = current.onclose = null
     socket = null
     streaming = false
+    disconnected()
     watchdog?.()
     watchdog = null
     current.close()
@@ -124,6 +156,7 @@ export function startNodeTransport<T>(options: TransportOptions<T>): () => void 
     try {
       current = options.openSocket()
     } catch (error) {
+      disconnected()
       options.fail(error)
       void fetchOnce()
       reconnect()
@@ -142,6 +175,9 @@ export function startNodeTransport<T>(options: TransportOptions<T>): () => void 
       }
       revision++
       streaming = true
+      grace?.()
+      grace = null
+      options.streamState?.(true)
       failures = 0
       poll?.()
       poll = null
@@ -163,6 +199,7 @@ export function startNodeTransport<T>(options: TransportOptions<T>): () => void 
     poll?.()
     retry?.()
     watchdog?.()
+    grace?.()
     pending?.abort()
     if (socket) {
       socket.onmessage = socket.onerror = socket.onclose = null

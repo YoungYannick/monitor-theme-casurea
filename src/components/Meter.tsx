@@ -28,7 +28,7 @@ type Props = {
 export function Meter({ label, pct, foot, empty = "—", icon: Icon, plain = false }: Props) {
   // null 表示这项指标没有可填的上限：条留空而不是报 0% 百分比位置显示什么取决于原因——
   // 没有指标的节点显示 unknown，没有限额的套餐显示 ∞
-  const filled = pct === null ? 0 : Math.min(100, Math.max(0, pct))
+  const filled = pct === null || !Number.isFinite(pct) ? 0 : Math.min(100, Math.max(0, pct))
   return (
     <div className="min-w-0">
       <div className="flex items-baseline justify-between gap-2">

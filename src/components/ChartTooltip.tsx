@@ -70,14 +70,14 @@ export function ChartTooltip({
       <div className="mb-1 text-muted-foreground">{new Date(Number(label)).toLocaleString("zh-CN")}</div>
       <ul className="space-y-px">
         {shown.map((entry) => (
-          <li key={String(entry.dataKey)} className="flex items-center gap-1.5 whitespace-nowrap">
+          <li key={String(entry.dataKey)} className="flex items-center gap-1.5">
             {/* 与线上同色同线型的那枚小圆点 */}
             <span className="size-1.5 shrink-0 rounded-full" style={{ background: entry.color }} />
-            <span>{entry.name}</span>
+            <span className="min-w-0 [overflow-wrap:anywhere]">{entry.name}</span>
             {finite(entry) ? (
-              <span className="tnum ml-auto pl-2 font-medium">{format(Number(entry.value))}</span>
+              <span className="tnum ml-auto shrink-0 whitespace-nowrap pl-2 font-medium">{format(Number(entry.value))}</span>
             ) : (
-              <span className="ml-auto pl-2 text-muted-foreground">{emptyText ?? "—"}</span>
+              <span className="ml-auto shrink-0 whitespace-nowrap pl-2 text-muted-foreground">{emptyText ?? "—"}</span>
             )}
             {trailing?.(entry)}
           </li>
@@ -131,7 +131,6 @@ export function PingTooltip({
       label={label}
       payload={payload}
       worstFirst
-      capNarrow={5}
       format={(value) => `${value} ms`}
       // 没答上来的排最后：它们是「没有值」，不是「很快」
       sortKey={(entry) => (entry.value == null ? Number.MAX_SAFE_INTEGER : Number(entry.value))}
@@ -139,7 +138,7 @@ export function PingTooltip({
       emptyText="无响应"
       trailing={(entry) => {
         const loss = lossOf(entry)
-        return loss > 0 ? <span className="tnum pl-1 text-muted-foreground">丢 {loss}%</span> : null
+        return loss > 0 ? <span className="tnum shrink-0 whitespace-nowrap pl-1 text-muted-foreground">丢 {loss}%</span> : null
       }}
     />
   )

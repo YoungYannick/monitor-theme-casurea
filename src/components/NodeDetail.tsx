@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Country, deployed, RemarkChips } from "@/components/NodeCard"
 import { api, type Node } from "@/lib/api"
 import {
-  axisBytes, axisTop, bytes, CYCLES, cpuName, despike, money, offlineSeconds, osName, rate, uptime,
+  axisBytes, axisTop, bytes, cycleLabel, cpuName, despike, money, offlineSeconds, osName, rate, uptime,
 } from "@/lib/format"
 import { hasDetailRemarks, remarkChips } from "@/lib/notes"
 import { latencyLineOptions, latencyStyleFromOptions, remarksOnCards, type RemarkPlacement } from "@/lib/site-settings"
@@ -91,7 +91,7 @@ function onlineStatus(node: Node): { online: boolean; text: string } | null {
 /** 规格那格的「续费」：金额 / 周期 · 到期日；没写价格（免费）返回 null */
 function renewalFor(node: Node): string | null {
   const priced = Number.isFinite(node.price) && node.price > 0
-  const cycle = CYCLES[node.billing_cycle] ?? (node.billing_cycle || null)
+  const cycle = cycleLabel(node.billing_cycle)
   const pay = priced ? `${money(node.price, node.currency)}${cycle ? ` / ${cycle}` : ""}` : "免费"
   const until = node.expires_at ? `${node.expires_at.slice(0, 10)} 到期` : null
   return until ? `${pay} · ${until}` : pay
@@ -730,7 +730,6 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
                   // 延迟轴不从 0 起：这些线路活在一条窄带里，锚到 0 会把起伏压平
                   domain="auto"
                   unit="ms"
-                  left={52}
                   connectGaps={connectGaps}
                   smoothLines={smoothLines}
                   from={zoomIndices?.[0] ?? 0}

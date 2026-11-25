@@ -8,7 +8,7 @@ import { CITY_HINTS, COUNTRY_CITY_FALLBACK, COUNTRY_LL, COUNTRY_NAMES, type Ring
 import type { Node } from "@/lib/api"
 
 /** 画布与圆盘 上游 SVG 的 `viewBox="0 0 460 240"` 就是这几个数，改它们等于换一套构图 */
-export const VIEW = { w: 460, h: 240, cx: 230, cy: 112, r: 92 } as const
+export const VIEW = { w: 460, h: 240, cx: 230, cy: 120, r: 104 } as const
 export type GlobeView = Readonly<{ w: number; h: number; cx: number; cy: number; r: number }>
 export const GLOBE_ZOOM = { min: 50, max: 150, step: 5, default: 100 } as const
 
@@ -19,8 +19,8 @@ export function zoomView(percent: number, labelCount = 0): GlobeView {
   // 左右数量差最多 2；用全部落点预留空间，避免自转过程中可见数量变化导致高度跳动
   const rows = Math.ceil(Math.max(0, Number.isFinite(labelCount) ? labelCount : 0) / 2) + 1
   const gap = rows > 14 ? 11 : 13
-  const h = Math.max(VIEW.h, r * 2 + 56, 12 + (rows - 1) * gap + 36)
-  return { w: VIEW.w, h, cx: VIEW.cx, cy: (h - 16) / 2, r }
+  const h = Math.max(VIEW.h, r * 2 + 32, 24 + (rows - 1) * gap)
+  return { w: VIEW.w, h, cx: VIEW.cx, cy: h / 2, r }
 }
 
 /** 极角余弦的可见阈值：`cos c > 0.02` 才画（≈ 中心 88.9° 以内，多留一点余量好裁边） */
@@ -710,10 +710,65 @@ export function regionRows(nodes: Node[]): RegionRow[] {
  * 选中地区的筛选：选中的地区已经不在了（节点下线/改名/换了分组）就回落「全部」，
  * 而不是停在一个什么都看不见的筛选上 —— 与 `groupView` 同一套归一化思路
  */
-export function regionView(nodes: Node[], current: string | null) {
+export function groupedRegionRows(nodes: Node[]): { group: string; rows: RegionRow[] }[] {
+  const groups = new Map<string, Node[]>()
+  for (const node of nodes) {
+    const group = node.group ?? ""
+    const members = groups.get(group)
+    if (members) members.push(node)
+    else groups.set(group, [node])
+  }
+  return [...groups].sort(([a], [b]) => Number(!a) - Number(!b))
+    .map(([group, members]) => ({ group, rows: regionRows(members) }))
+    .filter(({ rows }) => rows.length > 0)
+}
+
+export type RegionPageLayout = {
+  height: number
+  columns: number
+  rowHeight: number
+  rowGap: number
+  groupHeight: number
+  groupGap: number
+}
+
+/** 按完整标题与地区行占用的高度分页；分组跨页时重新预留标题，不截断任何条目 */
+export function paginateRegionRows<T extends { group: string }>(rows: T[], layout: RegionPageLayout): { pages: T[][]; heights: number[] } {
+  const pages: T[][] = [[]]
+  const heights = [0]
+  const columns = Math.max(1, Math.floor(layout.columns))
+  let group: string | null = null
+  let count = 0
+  for (const row of rows) {
+    let page = pages.length - 1
+    const cost = row.group !== group
+      ? (pages[page].length ? layout.groupGap : 0) + layout.groupHeight + layout.rowHeight
+      : count % columns === 0 ? layout.rowGap + layout.rowHeight : 0
+    if (pages[page].length && heights[page] + cost > layout.height) {
+      pages.push([])
+      heights.push(0)
+      page++
+      group = null
+      count = 0
+    }
+    if (row.group !== group) {
+      heights[page] += (pages[page].length ? layout.groupGap : 0) + layout.groupHeight + layout.rowHeight
+      group = row.group
+      count = 0
+    } else if (count % columns === 0) heights[page] += layout.rowGap + layout.rowHeight
+    pages[page].push(row)
+    count++
+  }
+  return { pages, heights }
+}
+
+
+export function regionView(nodes: Node[], current: string | null, group: string | null = null) {
   const rows = regionRows(nodes)
-  const valid = current !== null && rows.some((row) => row.region.key === current) ? current : null
-  return { rows, current: valid, shown: valid === null ? nodes : nodes.filter((node) => regionOf(node)?.key === valid), total: nodes.length }
+  const candidates = group === null ? nodes : nodes.filter((node) => (node.group ?? "") === group)
+  const shown = current === null ? [] : candidates.filter((node) => regionOf(node)?.key === current)
+  const valid = shown.length > 0 ? current : null
+  return { rows, current: valid, group: valid === null ? null : group, shown: valid === null ? nodes : shown, total: nodes.length }
 }
 
 /* ------------------------------------------------------------------ 标签排布 */
@@ -762,15 +817,13 @@ export function layoutLabels(cam: Pick<Camera, "view" | "at">, points: GlobeNode
   for (const point of points) {
     const p = cam.at(point.ll[0], point.ll[1])
     if (!p) continue
-    const labels = point.memberLabels.map((member) => {
-      const left = trimLabel(`${member.name} · ${member.code}`, maxWidth, measure)
-      const right = trimLabel(`${member.code} · ${member.name}`, maxWidth, measure)
-      return {
-        ...member, key: `${point.key}:${member.id}`, px: p.x, py: p.y, lx: 0, ly: 0, end: false, label: right,
-        width: Math.max(inkWidthWith(measure, left), inkWidthWith(measure, right)), left, right,
-      }
-    })
-    if (labels.length) visible.push({ point, px: p.x, py: p.y, labels })
+    const label = trimLabel(`${point.code} · ${point.region.label}`, maxWidth, measure)
+    const labels = [{
+      id: point.id, name: point.region.label, code: point.code, index: point.index,
+      key: point.key, px: p.x, py: p.y, lx: 0, ly: 0, end: false, label,
+      width: inkWidthWith(measure, label), left: label, right: label,
+    }]
+    visible.push({ point, px: p.x, py: p.y, labels })
   }
   const items = visible.flatMap((item) => item.labels)
   const left: PlacedLabel[] = []
@@ -798,8 +851,8 @@ export function layoutLabels(cam: Pick<Camera, "view" | "at">, points: GlobeNode
     if (!list.length) return
     list.sort((a, b) => a.py - b.py || a.index - b.index)
     const top = 12
-    const bottom = cam.view.h - 36
-    // zoomView 按全部成员计高度，通常保留 11/13 行距；错误传入过小画布时仍不越界
+    const bottom = cam.view.h - 12
+    // zoomView 按地点数计高度，通常保留 11/13 行距；错误传入过小画布时仍不越界
     const gap = Math.min(list.length > 14 ? 11 : 13, Math.max(0, bottom - top) / Math.max(1, list.length - 1))
     const mean = list.reduce((sum, item) => sum + item.py, 0) / list.length
     let y0 = mean - ((list.length - 1) * gap) / 2
@@ -815,7 +868,7 @@ export function layoutLabels(cam: Pick<Camera, "view" | "at">, points: GlobeNode
       sides.set(item.key, end ? "L" : "R")
     })
   }
-  // 两摞与圆盘保持 15 个用户单位间距；100% 时仍是上游的 123 / 337
+  // 两摞与圆盘保持 15 个用户单位间距
   const offset = cam.view.r + 15
   stack(left, cx - offset, true)
   stack(right, cx + offset, false)

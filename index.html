@@ -19,6 +19,16 @@
         }
       })()
     </script>
+    <script>
+      ;(function () {
+        var preference = null, mode = "system"
+        try { preference = localStorage.getItem("theme"); mode = localStorage.getItem("casurea:site_mode") || "system" } catch (e) {}
+        var hour = new Date(Date.now() + 8 * 3600000).getUTCHours()
+        var dark = preference === "dark" || preference !== "light" && (mode === "dark" || mode === "auto" && (hour >= 19 || hour < 7) || mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
+        document.documentElement.classList.toggle("dark", dark)
+        document.documentElement.style.colorScheme = dark ? "dark" : "light"
+      })()
+    </script>
     <script src="/title-probe.js"></script>
   </head>
   <body>

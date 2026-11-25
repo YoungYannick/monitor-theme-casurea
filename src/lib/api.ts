@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { recordNodeSpeeds } from "./speed-history.ts"
+import { clearNodeSpeeds, recordNodeSpeeds } from "./speed-history.ts"
 import { ApiError, requestJSON, startNodeTransport } from "./transport.ts"
 export { ApiError } from "./transport.ts"
 
@@ -10,7 +10,7 @@ export type Metrics = {
   mem_total: number
   mem_used: number
   swap_total: number
-  swap_used: number
+  swap_used?: number | null
   disk_total: number
   disk_used: number
   net_rx: number
@@ -19,9 +19,9 @@ export type Metrics = {
   total_tx: number
   month_rx: number
   month_tx: number
-  tcp: number
-  udp: number
-  procs: number
+  tcp?: number | null
+  udp?: number | null
+  procs?: number | null
 }
 
 export type Node = {
@@ -146,8 +146,8 @@ export function sample(nodes: Node[]) {
 export function safeNodes(nodes: unknown): Node[] {
   if (!Array.isArray(nodes)) throw new Error("节点数据格式错误")
   const number = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0
-  const fields = ["uptime", "cpu", "mem_total", "mem_used", "swap_total", "swap_used", "disk_total", "disk_used",
-    "net_rx", "net_tx", "total_rx", "total_tx", "month_rx", "month_tx", "tcp", "udp", "procs"] as const
+  const fields = ["uptime", "cpu", "mem_total", "mem_used", "swap_total", "disk_total", "disk_used",
+    "net_rx", "net_tx", "total_rx", "total_tx", "month_rx", "month_tx"] as const
   return nodes.flatMap((raw) => {
     if (!raw || typeof raw !== "object" || !Number.isSafeInteger(raw.id) || raw.id <= 0) return []
     const node = raw as Node
@@ -173,8 +173,15 @@ export function safeNodes(nodes: unknown): Node[] {
     safe.online = safe.online === true
     safe.public = safe.public === true
     const m = safe.metrics
-    safe.metrics = m && typeof m === "object" && fields.every((key) => number(m[key])) &&
-      Array.isArray(m.load) && m.load.length === 3 && m.load.every(number) ? m : null
+    const validMetrics = m && typeof m === "object" && fields.every((key) => number(m[key])) &&
+      Array.isArray(m.load) && m.load.length === 3 && m.load.every(number)
+    safe.metrics = validMetrics ? {
+      ...m,
+      swap_used: number(m.swap_used) ? m.swap_used : null,
+      tcp: number(m.tcp) ? m.tcp : null,
+      udp: number(m.udp) ? m.udp : null,
+      procs: number(m.procs) ? m.procs : null,
+    } : null
     return [Object.keys(safe).every((key) => safe[key as keyof Node] === node[key as keyof Node]) &&
       Object.keys(safe).length === Object.keys(node).length ? node : safe]
   })
@@ -189,6 +196,7 @@ export function useNodes() {
   // hub 答 401 时置位：状态页从本标签页加载起就对匿名访客关闭了hub 也会断流，
   // 所以它落在重连发起的那次回退 fetch 上；断开只允许客户端重查状态、不能强迫它
   const [closed, setClosed] = useState(false)
+  const [stalled, setStalled] = useState(false)
 
   useEffect(() => {
     const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/ws`
@@ -198,10 +206,22 @@ export function useNodes() {
       }
       return safeNodes((data as { nodes: unknown[] }).nodes)
     }
-    return startNodeTransport({
+    const clearSpeeds = () => {
+      clearNodeSpeeds()
+      speedHistory.clear()
+    }
+    const onVisibility = () => {
+      if (document.hidden) clearSpeeds()
+    }
+    document.addEventListener("visibilitychange", onVisibility)
+    const stop = startNodeTransport({
       fetchNodes: (signal) => api<unknown>("/nodes", { signal }).then(readNodes),
       openSocket: () => new WebSocket(url),
       parseMessage: (data) => readNodes(JSON.parse(data)),
+      streamState: (connected) => {
+        setStalled(!connected)
+        if (!connected) clearSpeeds()
+      },
       receive: (safe) => {
         sample(safe)
         setNodes(safe)
@@ -213,7 +233,11 @@ export function useNodes() {
         if (error instanceof ApiError && error.status === 401) setClosed(true)
       },
     })
+    return () => {
+      stop()
+      document.removeEventListener("visibilitychange", onVisibility)
+    }
   }, [])
 
-  return { nodes, error, closed }
+  return { nodes, error, closed, stalled }
 }

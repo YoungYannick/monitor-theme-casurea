@@ -133,6 +133,7 @@ function Field({ value, onChange, onActivate, onClose, onMove, onEnter, autoFocu
         onFocus={onActivate}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing || e.keyCode === 229) return
           // ↑↓ 选的是**下面那张列表**（命中列表的顺序），不是输入框里的光标历史 ——
           // 一概吞掉：单行搜索框里这两下本来没有用途，放行只会让光标跳到词首/词尾
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {

@@ -1,3 +1,5 @@
+import type { Node } from "./api.ts"
+
 const UNITS = ["B", "KB", "MB", "GB", "TB", "PB"]
 
 const unitOf = (n: number) => Math.min(Math.floor(Math.log(n) / Math.log(1024)), UNITS.length - 1)
@@ -13,11 +15,23 @@ const unitOf = (n: number) => Math.min(Math.floor(Math.log(n) / Math.log(1024)),
  */
 export function bytes(n: number, digits?: number): string {
   // `< 1` rather than `< 0`: a fraction of a byte puts `unitOf` at -1 and prints
-  // "512 undefined".
-  if (!n || n < 1) return "0 B"
-  const i = unitOf(n)
-  const v = n / 1024 ** i
-  return `${v.toFixed(i === 0 ? 0 : (digits ?? (v >= 100 ? 0 : v >= 10 ? 1 : 2)))} ${UNITS[i]}`
+  // "512 undefined". 非有限值同理（`bytes(Infinity)` 曾印「Infinity PB」）——
+  // 这类值只可能来自坏样本（agent 报了个溢出数），当 0 比印一串天文数字有用
+  if (!Number.isFinite(n) || n < 1) return "0 B"
+  let i = unitOf(n)
+  let v = n / 1024 ** i
+  const places = () => (i === 0 ? 0 : (digits ?? (v >= 100 ? 0 : v >= 10 ? 1 : 2)))
+  // 四舍五入之后可能正好顶到 1024（1023.6 B → 「1024 B」、1048575 B → 「1024 KB」）：
+  // 数值与单位对不上，读起来是个坏数 顶到就升一档重算；PB 是最后一档，原地印
+  // （rate() 早就有这条进位规则，bytes / axisBytes 是后补的 —— 2026-11-06）
+  if (Number(v.toFixed(places())) >= 1024 && i < UNITS.length - 1) {
+    i += 1
+    v = n / 1024 ** i
+  }
+  // 与 rate() 同一条：PB 是最后一档，再往上是天文数字（`bytes(1e30)` 会印
+  // 「888178419700125 PB」），夹在 999 —— 卡片上那一格放不下一串十五位数
+  if (i === UNITS.length - 1) v = Math.min(v, 999)
+  return `${v.toFixed(places())} ${UNITS[i]}`
 }
 
 /**
@@ -27,12 +41,40 @@ export function bytes(n: number, digits?: number): string {
  * spanning two units has nothing to save and falls back to bytes().
  */
 export function pair(used: number, total: number): string {
-  if (used > 0 && total > 0 && unitOf(used) === unitOf(total)) {
-    const i = unitOf(total)
-    const f = (n: number) => (n / 1024 ** i).toFixed(i === 0 ? 0 : 2)
-    return `${f(used)} / ${f(total)} ${UNITS[i]}`
+  // 非有限值/负数一律当 0：`bytes(Infinity)` 会印「Infinity PB」、负值会让 `unitOf` 给出
+  // 越界档位 这两个入口在调用方看起来都是「一个合法的 number」，不能指望它们自己过滤
+  const u0 = Number.isFinite(used) && used > 0 ? used : 0
+  const t0 = Number.isFinite(total) && total > 0 ? total : 0
+  const unit = u0 > 0 && t0 > 0 && unitOf(u0) === unitOf(t0) ? unitOf(t0) : -1
+  if (unit >= 0) {
+    const f = (n: number, power: number) => (n / 1024 ** power).toFixed(power === 0 ? 0 : 2)
+    // ★两侧都要判（2026-11-07 二审）：只判 total 时「用超套餐但没超太多」那一小段会印出
+    //   「1024 / 1023 B」—— 左边四舍五入顶到 1024、单位却还是小的一档used 先顶到就一起升档，
+    //   升档后 used 仍 ≥1024 是真的超额（30 GB 套餐用了 102 GB），那时印 100+ 是正确读数
+    // ★哪一侧顶到 1024，就只让**那一侧**升档（2026-11-21 三审）：原先两侧一起升，
+    //   `pair(1023.4, 1023.6)` 于是印「1.00 / 1.00 KB」—— 而 `bytes(1023.4)` 印的是
+    //   「1023 B」 实际用量 1023 B 被凭空放大成 1 KB，卡片上那一格就成了假读数
+    //   现在的规则：先按原档印；某一侧四舍五入后到 1024，只把那一侧换成更高一档
+    const top = UNITS.length - 1
+    const part = (n: number): string => {
+      let power = unit
+      // 至多升一档就够了（1023.999 B → 1.00 KB）；若那一档还是 ≥1024（真的超额），
+      // 继续升到顶档为止，最后夹 999（与 bytes 同一条夹子）
+      while (power < top && Number(f(n, power)) >= 1024) power += 1
+      const value = n / 1024 ** power
+      if (power >= top) return `${Math.min(value, 999).toFixed(2)} ${UNITS[top]}`
+      return `${f(n, power)} ${UNITS[power]}`
+    }
+    const left = part(u0)
+    const right = part(t0)
+    // 两侧落在同一档时合成「x / y UNIT」（卡片上那一格最紧凑的写法）；
+    // 跨档（一侧升了、另一侧没升）就各自带单位 —— 否则读者会以为两个数同档
+    const lu = left.slice(left.lastIndexOf(" ") + 1)
+    const ru = right.slice(right.lastIndexOf(" ") + 1)
+    if (lu === ru) return `${left.slice(0, left.lastIndexOf(" "))} / ${right.slice(0, right.lastIndexOf(" "))} ${lu}`
+    return `${left} / ${right}`
   }
-  return `${bytes(used)} / ${bytes(total)}`
+  return `${bytes(u0)} / ${bytes(t0)}`
 }
 
 /**
@@ -56,8 +98,9 @@ export function axisBytes(v: number): string {
  * decimal under 10 stays.
  */
 export function rate(n: number): string {
-  // `< 1` for the same reason as bytes(): a fraction of a byte puts unitOf at -1.
-  if (!n || n < 1) return "0 B/s"
+  // `< 1` for the same reason as bytes(): a fraction of a byte puts unitOf at -1;
+  // 非有限值同样归零（原先印「Infinity PB/s」）
+  if (!Number.isFinite(n) || n < 1) return "0 B/s"
   let i = unitOf(n)
   let v = n / 1024 ** i
   // `i < UNITS.length - 1`：进位不能越过 PB —— 一份离谱的大数（Infinity、1e30）会
@@ -66,15 +109,27 @@ export function rate(n: number): string {
     i += 1
     v = n / 1024 ** i
   }
+  // ★PB 是最后一档、上面那道进位写到头就停：`rate(1024**6-1)` 会印「1024 PB/s」、
+  //   `rate(1e30)` 印一串十五位数字 —— 与「每一档都停在 999」的设计自相矛盾，也会在
+  //   卡片的 50/50 格子里被省略号截断到顶就夹在 999，让人一眼看出「这是个离谱的大数」
+  if (i === UNITS.length - 1) v = Math.min(v, 999)
   return `${v.toFixed(i >= 1 && v < 10 ? 1 : 0)} ${UNITS[i]}/s`
 }
 
 export function percent(used: number, total: number): number {
-  return total > 0 ? Math.min(100, (used / total) * 100) : 0
+  // 夹到 0..100 两端：负数（坏样本 / 负的差值）原先会印出「-33.33%」，进度条还按它
+  // 画成反向；非有限值同理归零
+  if (!Number.isFinite(used) || !Number.isFinite(total) || total <= 0) return 0
+  return Math.min(100, Math.max(0, (used / total) * 100))
 }
 
 export function uptime(seconds: number): string {
+  // ★负数与非有限值都当「没有读数」（2026-11-21 三审）：`uptime(-90)` 原先印「-2 分」——
+  //   hub 那边 uptime 来自 agent 的开机时长，时钟回拨/重启中途会给负数
+  if (!Number.isFinite(seconds) || seconds < 0) return "—"
   if (!seconds) return "—"
+  // 不到 1 分钟单独说：原先 `uptime(0.9)` 印「0 分」，读者会以为「刚重启」与「未知」一样
+  if (seconds < 60) return "不到 1 分钟"
   const d = Math.floor(seconds / 86400)
   const h = Math.floor((seconds % 86400) / 3600)
   const m = Math.floor((seconds % 3600) / 60)
@@ -94,9 +149,22 @@ export function offlineSeconds(node: { last_seen: number; last_seen_ago?: number
 /** Whole days until a date, negative once it has passed. */
 export function daysUntil(date?: string | null): number | null {
   if (!date) return null
-  const target = new Date(`${date}T00:00:00`).getTime()
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(date)
+  if (!m) return null
+  const target = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  // ★`Number.isNaN(target)` 是死判据（2026-11-21 三审）：`Date.UTC(2026, 12, 45)` 不返回 NaN，
+  //   它把越界月份/日期**正常进位**（2026-13-45 → 2027-02-14）于是 `daysUntil("2026-13-45")`
+  //   返回 85 天、`daysUntil("2026-02-30")` 返回 -264 —— 两个都不存在的日期给出了貌似正常的
+  //   天数 正则通过后必须回读核对三个字段有没有被进位
   if (Number.isNaN(target)) return null
-  return Math.ceil((target - Date.now()) / 86400000)
+  const d = new Date(target)
+  if (d.getUTCFullYear() !== Number(m[1]) || d.getUTCMonth() !== Number(m[2]) - 1 || d.getUTCDate() !== Number(m[3])) {
+    return null
+  }
+  const day = 86_400_000
+  const beijing = 8 * 3_600_000
+  const index = (ms: number) => Math.floor((ms + beijing) / day)
+  return index(target) - index(Date.now())
 }
 
 /**
@@ -110,7 +178,7 @@ const SYMBOLS: Record<string, string> = { USD: "$", CNY: "¥", EUR: "€", GBP: 
 
 /** 币种对应的符号；表里没有的币种返回空串（金额那一半会退化成后缀的 ISO 代码） */
 export function currencySymbol(currency: string): string {
-  return SYMBOLS[currency] ?? ""
+  return SYMBOLS[(currency ?? "").trim().toUpperCase()] ?? ""
 }
 
 /**
@@ -118,7 +186,13 @@ export function currencySymbol(currency: string): string {
  * 分开是为了「符号单独占一列」的排版：符号进下面那枚读数盒的图标位，数字留在文字位
  */
 export function moneyAmount(amount: number, currency: string): string {
-  return SYMBOLS[currency] ? amount.toFixed(2) : `${amount.toFixed(2)} ${currency}`.trim()
+  // ★币种缺失时只印数字（2026-11-21 三审）：原先 `moneyAmount(12, undefined)` 印
+  //   「12.00 undefined」、`null` 印「12.00 null」—— 卡片侧三个调用点都是直接透传
+  //   `node.currency`，老 hub 或手填数据缺这个键时访客就会看到这串字
+  //   口径与 money.ts 的 `(node.currency || "").toUpperCase()` 一致
+  const code = (currency ?? "").trim().toUpperCase()
+  if (!code) return amount.toFixed(2)
+  return SYMBOLS[code] ? amount.toFixed(2) : `${amount.toFixed(2)} ${code}`
 }
 
 export function money(amount: number, currency: string): string {
@@ -144,6 +218,15 @@ export const CYCLE_SHORT: Record<string, string> = {
   biennial: "两年",
   triennial: "三年",
   once: "一次性",
+}
+
+/** Human-readable labels for named and custom whole-month billing cycles. */
+export function cycleLabel(cycle: string, short = false): string | null {
+  const named = (short ? CYCLE_SHORT : CYCLES)[cycle]
+  if (named) return named
+  const months = Number(/^(\d+)m$/.exec(cycle)?.[1])
+  if (Number.isInteger(months) && months >= 1 && months <= 1200) return `${months} 个月`
+  return cycle || null
 }
 
 // Hoisted out of `clock`: constructing an Intl formatter per call is the largest
@@ -227,7 +310,13 @@ export function timeTicks(from: number, to: number, count = 8): number[] {
  * a peak.
  */
 export function axisTop(max: number, floor: number, base = 10, cap = Infinity): number {
-  const target = Math.min(cap, Math.max(max, floor)) / 4
+  // ★非有限值先归零（2026-11-21 三审）：`axisTop(Infinity)` 原先一路算出 Infinity 并返回，
+  //   而 `quarters(Infinity)` 得到 [NaN×5] —— NodeDetail 的 `+((4 - top % 4) % 4)` 于是变成
+  //   NaN、Y 轴刻度全丢 这与同文件 bytes/rate/percent 已经做的「非有限值归零」自相矛盾
+  //   来源是 safeNodes 曾放行的 Infinity（那条也一起修了），但函数自己也要挡
+  const safeMax = Number.isFinite(max) ? max : 0
+  const safeFloor = Number.isFinite(floor) ? floor : 1
+  const target = Math.min(cap, Math.max(safeMax, safeFloor)) / 4
   const scale = base ** Math.floor(Math.log(target) / Math.log(base))
   const step = LADDER[base].map((m) => m * scale).find((n) => n >= target)
   return Math.min(cap, (step ?? target) * 4)
@@ -308,4 +397,58 @@ function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
   const half = sorted.length >> 1
   return sorted.length % 2 ? sorted[half] : (sorted[half - 1] + sorted[half]) / 2
+}
+
+
+const STEPS = [1, 2, 2.5, 5, 10]
+
+export function niceScale(lo: number, hi: number, count = 4): { lo: number; hi: number; ticks: number[] } {
+  if (!(hi > lo)) {
+    const pad = Math.abs(hi) > 1 ? Math.abs(hi) * 0.1 : 1
+    lo = hi >= 0 ? Math.max(0, lo - pad) : lo - pad
+    hi += pad
+  }
+  const raw = (hi - lo) / count
+  const mag = 10 ** Math.floor(Math.log10(Math.max(raw, Number.MIN_VALUE)))
+  const step = STEPS.map((m) => m * mag).find((n) => n >= raw) ?? raw
+  const low = Math.floor(lo / step) * step
+  const high = Math.ceil(hi / step) * step
+  // ★刻度保留几位**跟着步长走**（2026-11-21 三审）：原先写死 `Math.round(v * 1e6) / 1e6`，
+  //   于是量程小于 1e-6 时每个刻度都被舍成 0 —— `niceScale(0, 1e-9)` 给出
+  //   `ticks = [0, 0, 0, 0, 0]` 图表那边网格线与 Y 轴文字都用 `key={`g${v}`}`，
+  //   五个 0 撞成同一个 key：React 只画得出其中一条网格线，刻度标签也全叠在轴底
+  //   步长是 1/2/2.5/5 × 10^k，所以「k 的小数位 + 1」位就足够精确（0.25 要两位）
+  // 步长是 1/2/2.5/5 × 10^k，`-k + 1` 位足够（0.25 用 2 位、1e-9 用 10 位），多的一位吃掉浮点尾巴
+  const places = (() => {
+    if (!Number.isFinite(step) || step <= 0) return 6
+    const k = Math.floor(Math.log10(step))
+    return Math.min(20, Math.max(0, -k + 1))
+  })()
+  const snap = (v: number) => Number(v.toFixed(places))
+  const ticks: number[] = []
+  for (let v = low; v <= high + step / 2; v += step) ticks.push(snap(v))
+  // 兜底：浮点累加在极小量程上仍可能撞车，最后再按 step/1000 归一次（并去重）
+  const uniq = [...new Set(ticks.length ? ticks : [snap(low), snap(high)])]
+  return { lo: snap(low), hi: snap(high), ticks: uniq.length ? uniq : [snap(low), snap(high)] }
+}
+
+export function clockBeijing(ms: number): string {
+  const d = new Date(ms + 8 * 3_600_000)
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`
+}
+
+export function monthUsage(node: Node): number {
+  if (typeof node.month_used === "number") return node.month_used
+  const rx = node.month_rx || 0
+  const tx = node.month_tx || 0
+  switch (node.traffic_mode) {
+    case "up":
+      return tx
+    case "down":
+      return rx
+    case "max":
+      return Math.max(rx, tx)
+    default:
+      return rx + tx
+  }
 }

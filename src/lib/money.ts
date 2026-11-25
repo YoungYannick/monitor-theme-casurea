@@ -53,13 +53,14 @@ export function cycleDaysOf(cycle: string, expiresAt: string | null | undefined)
   if (months <= 0) return 0
   const fallback = months * 30
   if (!expiresAt) return fallback
-  const end = new Date(`${expiresAt.slice(0, 10)}T00:00:00`)
+  const end = new Date(`${expiresAt.slice(0, 10)}T00:00:00Z`)
   if (Number.isNaN(end.getTime())) return fallback
+  if (end.toISOString().slice(0, 10) !== expiresAt.slice(0, 10)) return fallback
   const endMs = end.getTime()
-  const day = end.getDate()
-  if (months % 12 === 0) end.setFullYear(end.getFullYear() - months / 12)
-  else end.setMonth(end.getMonth() - months)
-  if (end.getDate() !== day) end.setDate(0)
+  const day = end.getUTCDate()
+  if (months % 12 === 0) end.setUTCFullYear(end.getUTCFullYear() - months / 12)
+  else end.setUTCMonth(end.getUTCMonth() - months)
+  if (end.getUTCDate() !== day) end.setUTCDate(0)
   const span = Math.round((endMs - end.getTime()) / 86_400_000)
   return span > 0 ? span : fallback
 }
@@ -275,4 +276,17 @@ export function parseRateOverrides(text: string): { rates: Record<string, number
 function trimRate(rate: number): string {
   if (rate > 0 && rate < 1e-8) return rate.toPrecision(8)
   return rate.toFixed(8).replace(/\.?0+$/, "")
+}
+
+
+export function recurringCurrency(node: Node, excludeTag = ""): string | null {
+  if (isExcludedByTag(node, excludeTag)) return null
+  if (!Number.isFinite(node.price) || node.price <= 0 || node.billing_cycle === "once") return null
+  return (node.currency || "").trim().toUpperCase()
+}
+
+export function monthlyCostOf(node: Node, rates: Record<string, number>, excludeTag = ""): number | null {
+  const currency = recurringCurrency(node, excludeTag)
+  const fx = currency === null ? undefined : rateOf(currency, rates)
+  return fx === undefined ? null : (node.price * fx) / cycleMonthsOf(node.billing_cycle)
 }

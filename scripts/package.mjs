@@ -2,7 +2,7 @@
 // 极简探针的主题包结构：hub 只做静态文件伺服，dist/ 就是整站
 //
 // 用法：npm run package（先 build 再打包）
-import { execFileSync } from 'node:child_process'
+import { listArchive, packDirectory } from './lib/pack.mjs'
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 
@@ -55,12 +55,12 @@ if (existsSync('preview.png')) {
 }
 
 const archive = 'release/theme.tar.gz'
-execFileSync('tar', ['-czf', archive, '-C', staging, ...files], { stdio: 'inherit' })
+packDirectory(staging, archive, { files })
 
 // 开包验证一遍，别把空包或路径写错的包发出去
 // 按 CRLF 也切：Windows 的 bsdtar 列出的每行末尾带 \r，只切 \n 的话每个条目都多一个尾随字符，
 // 下面那些字面量比对就会全部落空（Linux / macOS 的 tar 不受影响）
-const listing = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' }).trim().split(/\r?\n/)
+const listing = listArchive(archive).map((entry) => entry.name)
 for (const need of ['theme.json', 'LICENSE', 'dist/index.html', 'dist/favicon.ico', 'dist/apple-touch-icon.png', ...(files.includes('preview.png') ? ['preview.png'] : [])]) {
   if (!listing.includes(need)) throw new Error(`包内缺 ${need}（共 ${listing.length} 项）`)
 }

@@ -59,7 +59,7 @@ const CACHES = [
   { what: '站名', key: 'casurea:site_name', places: [
     ['src/App.tsx', /TITLE_CACHE_KEY\s*=\s*"([^"]+)"/g],
     ['public/title-probe.js', /var KEY\s*=\s*"([^"]+)"/g],
-    ['index.html', /localStorage\.getItem\("([^"]+)"\)/g],
+    ['index.html', /localStorage\.getItem\("(casurea:site_name)"\)/g],
   ] },
 ]
 const bad = []

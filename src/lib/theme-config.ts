@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react"
 
 import { api } from "@/lib/api"
+import { requestJSON } from "@/lib/transport"
 import { cardStyleOrNull, DEFAULTS, normalizeConfig, type LatencyStyle, type ThemeConfig } from "@/lib/site-settings"
 
 type LatencyStyleState = {
@@ -84,7 +85,7 @@ export function useGlobeVisible(siteDefault: boolean): [boolean, () => void] {
  * 访客选的记下来；选成和站长设置一样的那档时**把记录删掉**（= 重新"跟着站长走"，
  * 以后站长改默认，这位访客也会跟着变）
  */
-export function useCardStyle(siteDefault: ThemeConfig["cardStyle"]): [ThemeConfig["cardStyle"], (next: ThemeConfig["cardStyle"]) => void] {
+export function useCardStyle(siteDefault: ThemeConfig["cardStyle"], ready: boolean): [ThemeConfig["cardStyle"], (next: ThemeConfig["cardStyle"]) => void] {
   const [picked, setPicked] = useState<ThemeConfig["cardStyle"] | null>(() => {
     try {
       return cardStyleOrNull(localStorage.getItem(CARD_STYLE_KEY))
@@ -94,15 +95,15 @@ export function useCardStyle(siteDefault: ThemeConfig["cardStyle"]): [ThemeConfi
   })
   const choose = useCallback(
     (next: ThemeConfig["cardStyle"]) => {
-      setPicked(next === siteDefault ? null : next)
+      setPicked(ready && next === siteDefault ? null : next)
       try {
-        if (next === siteDefault) localStorage.removeItem(CARD_STYLE_KEY)
+        if (ready && next === siteDefault) localStorage.removeItem(CARD_STYLE_KEY)
         else localStorage.setItem(CARD_STYLE_KEY, next)
       } catch {
         // 记不住就只影响这一次会话：当前这一档仍然会立刻生效
       }
     },
-    [siteDefault],
+    [siteDefault, ready],
   )
   return [picked ?? siteDefault, choose]
 }
@@ -134,15 +135,15 @@ export function useLocalFarm(): string {
   const [found, setFound] = useState(false)
   useEffect(() => {
     let alive = true
-    fetch("/chicken/api/nodes", { headers: { Accept: "application/json" } })
-      .then((res) => res.json())
+    const controller = new AbortController()
+    requestJSON<{ nodes?: unknown[] }>("/chicken/api/nodes", { headers: { Accept: "application/json" }, signal: controller.signal })
       .then((data) => {
         if (alive && data && Array.isArray(data.nodes)) setFound(true)
       })
       .catch(() => {
         // 没装、或装了但那台没回 JSON：都不显示入口，不报错、不占位
       })
-    return () => { alive = false }
+    return () => { alive = false; controller.abort() }
   }, [])
   return found ? "/chicken/" : ""
 }
@@ -151,20 +152,23 @@ export function useLocalFarm(): string {
  * 读回本站的设置 任何失败都回落默认值：后台没存过（Hub 回 `{}`）、旧 hub 没这个接口、
  * 反代拦了——都不该让公开页白屏或缺一块收窄与迁移见 `normalizeConfig`
  */
-export function useThemeConfig(): ThemeConfig {
+export function useThemeConfig(): [ThemeConfig, boolean] {
   const [config, setConfig] = useState(DEFAULTS)
+  const [ready, setReady] = useState(false)
   useEffect(() => {
     let active = true
-    api<Partial<ThemeConfig>>(`/themes/${SHORT}/config`)
+    const controller = new AbortController()
+    api<Partial<ThemeConfig>>(`/themes/${SHORT}/config`, { signal: controller.signal })
       .then((saved) => {
         if (!active) return
         // 逐项收窄 + 旧值迁移都在 site-settings.ts（那里能单测）
         setConfig(normalizeConfig(saved))
+        setReady(true)
       })
       .catch(() => {
         // 取不到设置（旧 hub、反代拦了）就维持默认值：公开页照常渲染，不该白屏或缺一块
       })
-    return () => { active = false }
+    return () => { active = false; controller.abort() }
   }, [])
-  return config
+  return [config, ready]
 }

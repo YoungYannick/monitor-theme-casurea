@@ -2,6 +2,8 @@ import type { Camera, GlobeNode, GlobeView } from "./globe.ts"
 import type { Ring } from "./world.ts"
 
 export const MAP_VIEW = { w: 460, h: 240, viewBox: "0 0 460 240" } as const
+/** Keep Europe and Asia on the left and the Americas on the right. The seam is in the Atlantic. */
+export const MAP_DEFAULT_CENTER = { lon: 150, lat: 0 }
 /** 2:1 等距矩形；组件可按实际可用区域传入自适应边框 */
 export const MAP_BOUNDS = { x: 20, y: 10, w: 420, h: 210 } as const
 export type MapBounds = { x: number; y: number; w: number; h: number }
@@ -16,7 +18,7 @@ const EPS = 1e-9
 export function mapViewport(width: number = MAP_VIEW.w, height: number = MAP_VIEW.h): { w: number; h: number; bounds: MapBounds } {
   const w = Number.isFinite(width) && width > 48 ? width : MAP_VIEW.w
   const h = Number.isFinite(height) && height > 48 ? height : MAP_VIEW.h
-  const mapWidth = Math.min(w - 24, 2 * (h - 24))
+  const mapWidth = Math.min(w - 16, 2 * (h - 16))
   const mapHeight = mapWidth / 2
   return { w, h, bounds: { x: (w - mapWidth) / 2, y: (h - mapHeight) / 2, w: mapWidth, h: mapHeight } }
 }

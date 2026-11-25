@@ -1,3 +1,4 @@
+import { daysUntil } from "./format.ts"
 import type { Node } from "@/lib/api"
 
 /**
@@ -60,4 +61,11 @@ export function summarize(nodes: Node[]): Fleet {
     if (!fleet.busiest || m.cpu > fleet.busiest.cpu) fleet.busiest = { name: node.name, cpu: m.cpu }
   }
   return fleet
+}
+
+
+export function expiryDaysOf(node: Node): number | null {
+  if (node.billing_cycle === "once") return null
+  const days = node.expires_in ?? daysUntil(node.expires_at)
+  return typeof days === "number" && Number.isFinite(days) ? days : null
 }

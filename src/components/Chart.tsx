@@ -2,7 +2,7 @@ import { useId, useLayoutEffect, useRef, useState } from "react"
 
 import { ChartTooltip } from "@/components/ChartTooltip"
 import { linePath } from "@/lib/chart-path"
-import { clockFor, quarters, timeTicks } from "@/lib/format"
+import { clockFor, niceScale, quarters, timeTicks } from "@/lib/format"
 import { nearestTimeIndex, timeIndexAtRatio, withTimeGaps } from "@/lib/history"
 
 /**
@@ -25,8 +25,9 @@ export type ChartSeries = {
 
 export type ChartRow = { ts: number } & Record<string, number | [number, number] | null | undefined>
 
-/** 左边留给 Y 轴刻度的宽度，与四张资源图原来的 `Y_WIDTH` 一致（否则各图 x 会错位） */
-const LEFT = 68
+const Y_LABEL_X = 2
+const Y_AXIS_GAP = 8
+const MIN_PLOT_LEFT = 24
 const RIGHT = 8
 const TOP = 6
 const BOTTOM = 24
@@ -61,21 +62,7 @@ function extentOf(view: ChartRow[], keys: string[]): [number, number] | null {
  * 再把上下沿各向外扩到步长的整数倍 —— 就是原来 recharts `domain={["auto","auto"]}` 那套效果
  * （延迟轴不从 0 起：这些线路活在一条窄带里，锚到 0 会把起伏压平）
  */
-function niceScale(lo: number, hi: number, count = 4): { lo: number; hi: number; ticks: number[] } {
-  if (!(hi > lo)) {
-    const pad = Math.abs(hi) > 1 ? Math.abs(hi) * 0.1 : 1
-    lo -= pad
-    hi += pad
-  }
-  const raw = (hi - lo) / count
-  const mag = 10 ** Math.floor(Math.log10(Math.max(raw, Number.MIN_VALUE)))
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((n) => n >= raw) ?? raw
-  const low = Math.floor(lo / step) * step
-  const high = Math.ceil(hi / step) * step
-  const ticks: number[] = []
-  for (let v = low; v <= high + step / 2; v += step) ticks.push(Math.round(v * 1e6) / 1e6)
-  return { lo: low, hi: high, ticks }
-}
+
 
 export function TimeChart({
   rows,
@@ -90,7 +77,7 @@ export function TimeChart({
   to,
   label,
   domain = "zero",
-  left = LEFT,
+  left,
   connectGaps = false,
   smoothLines = false,
   onZoom,
@@ -121,7 +108,7 @@ export function TimeChart({
    *         锚到 0 会把抖动压平；这就是原来 `domain={["auto","auto"]}` 的意思）
    */
   domain?: "zero" | "auto"
-  /** 左边留给 Y 轴刻度的宽度（四张资源图 68，延迟图 52，与原来逐像素一致） */
+  /** 显式指定 Y 轴留白；默认按刻度的实际文字宽度计算 */
   left?: number
   /** 只连接曲线中的有效样本；原始空值、悬停提示与区间填充仍保留 */
   connectGaps?: boolean
@@ -133,19 +120,29 @@ export function TimeChart({
   renderTooltip?: (row: ChartRow) => React.ReactNode
 }) {
   const box = useRef<HTMLDivElement>(null)
+  const axis = useRef<SVGGElement>(null)
   const clipId = useId()
   const tip = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
+  const [axisWidth, setAxisWidth] = useState(0)
   const [hover, setHover] = useState<number | null>(null)
   const [pointerY, setPointerY] = useState<number | null>(null)
-  const [tipH, setTipH] = useState(0)
+  const [tipSize, setTipSize] = useState({ w: 0, h: 0 })
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null)
 
   // 卡片高度：用来把它夹在绘图区里（别顶出去）悬停的那一格变了才量一次
   useLayoutEffect(() => {
-    const h = tip.current?.offsetHeight ?? 0
-    if (h && h !== tipH) setTipH(h)
-  }, [hover, tipH])
+    const el = tip.current
+    if (!el) return
+    const read = () => setTipSize((previous) => {
+      const next = { w: el.offsetWidth, h: el.offsetHeight }
+      return previous.w === next.w && previous.h === next.h ? previous : next
+    })
+    const observer = new ResizeObserver(read)
+    observer.observe(el)
+    read()
+    return () => observer.disconnect()
+  }, [hover])
 
   useLayoutEffect(() => {
     const el = box.current
@@ -160,28 +157,51 @@ export function TimeChart({
   const last = Math.max(0, rows.length - 1)
   const a = Math.min(Math.max(Math.round(from), 0), last)
   const b = Math.min(Math.max(to ?? last, a), last)
-  const view = rows.slice(a, b + 1)
+  const view = rows.slice(a, b + 1).filter((row) => Number.isFinite(row.ts) && row.ts > 0)
   const display = withTimeGaps(view, step)
 
   const w = size.w
   const h = size.h
-  const plotW = Math.max(1, w - left - RIGHT)
+  const plotLeft = left ?? Math.max(MIN_PLOT_LEFT, Y_LABEL_X + axisWidth + Y_AXIS_GAP)
+  const plotW = Math.max(1, w - plotLeft - RIGHT)
   const plotH = Math.max(1, h - TOP - BOTTOM)
   const t0 = view.length ? view[0].ts : 0
   const t1 = view.length ? view[view.length - 1].ts : 1
   const span = Math.max(1, t1 - t0)
 
   // 刻度：零起点用 quarters(top)，自动档用数据量程取整齐步长
+  const zeroTop = Number.isFinite(top) && top > 0 ? top : yFormat ? 1024 : 4
   const scale =
     domain === "auto"
       ? niceScale(...(extentOf(view, series.map((s) => s.key)) ?? [0, 1]))
-      : { lo: 0, hi: top > 0 ? top : 1, ticks: quarters(top) }
+      : { lo: 0, hi: zeroTop, ticks: quarters(zeroTop) }
   const yRange = Math.max(1e-9, scale.hi - scale.lo)
 
-  const x = (ts: number) => left + ((ts - t0) / span) * plotW
+  const x = (ts: number) => plotLeft + ((ts - t0) / span) * plotW
   const y = (value: number) => TOP + plotH - ((value - scale.lo) / yRange) * plotH
 
-  const yLabel = yFormat ?? ((value: number) => String(Math.round(value * 10) / 10))
+  const tickStep = Math.abs((scale.ticks[1] ?? 1) - (scale.ticks[0] ?? 0))
+  const tickDigits = tickStep > 0 ? Math.min(20, Math.max(0, 1 - Math.floor(Math.log10(tickStep)))) : 1
+  const yLabel = yFormat ?? ((value: number) => String(Number(value.toFixed(tickDigits))))
+  const tickLabels = scale.ticks.map((value) => `${yLabel(value)}${unit}`)
+  const labelsKey = tickLabels.join("|")
+  useLayoutEffect(() => {
+    const el = axis.current
+    if (!el) return
+    let active = true
+    const measure = () => {
+      if (!active) return
+      const width = Math.ceil(Math.max(0, ...[...el.querySelectorAll("text")].map((label) => label.getComputedTextLength())))
+      setAxisWidth((previous) => previous === width ? previous : width)
+    }
+    measure()
+    void document.fonts?.ready.then(measure)
+    document.fonts?.addEventListener("loadingdone", measure)
+    return () => {
+      active = false
+      document.fonts?.removeEventListener("loadingdone", measure)
+    }
+  }, [labelsKey, w, h])
   const xTicks = view.length > 1 ? timeTicks(t0, t1).filter((t) => t >= t0 && t <= t1) : []
   const clock = clockFor(hours)
   // 撞在一起的刻度标签直接丢掉（原来靠 recharts 的 minTickGap，这里自己算）：
@@ -285,20 +305,20 @@ export function TimeChart({
     : null
 
   return (
-    <div ref={box} data-chart="" data-connect-gaps={connectGaps} data-smooth-lines={smoothLines} className="relative h-full w-full">
+    <div ref={box} data-chart="" data-plot-left={plotLeft} data-connect-gaps={connectGaps} data-smooth-lines={smoothLines} className="relative h-full w-full">
       {w > 0 && h > 0 && (
         <svg width={w} height={h} role="img" aria-label={label} className="overflow-visible">
           <defs>
             <clipPath id={clipId}>
-              <rect x={left} y={TOP} width={plotW} height={plotH} />
+              <rect x={plotLeft} y={TOP} width={plotW} height={plotH} />
             </clipPath>
           </defs>
           {/* 网格：只画横线（原来 `vertical={false}`），虚线、用边框色 */}
           {scale.ticks.map((v) => (
             <line
               key={`g${v}`}
-              x1={left}
-              x2={left + plotW}
+              x1={plotLeft}
+              x2={plotLeft + plotW}
               y1={y(v)}
               y2={y(v)}
               className="stroke-border"
@@ -308,19 +328,21 @@ export function TimeChart({
             />
           ))}
           {/* Y 轴刻度 */}
-          {scale.ticks.map((v) => (
+          <g ref={axis} data-y-axis className="tnum">
+          {scale.ticks.map((v, index) => (
             <text
               key={`y${v}`}
-              x={left - 6}
+              x={Y_LABEL_X}
               y={y(v)}
-              textAnchor="end"
+              textAnchor="start"
               dominantBaseline="middle"
               fontSize={FONT}
               fill="currentColor"
             >
-              {`${yLabel(v)}${unit}`}
+              {tickLabels[index]}
             </text>
           ))}
+          </g>
           {/* X 轴刻度 */}
           {keptX.map((t) => (
             <text key={`x${t}`} x={x(t)} y={TOP + plotH + 14} textAnchor="middle" fontSize={FONT} fill="currentColor">
@@ -370,7 +392,7 @@ export function TimeChart({
           )}
           {/* 命中层：整块绘图区接指针，按 x 找最近的那个点；给了 onZoom 就能横向拖选缩放 */}
           <rect
-            x={left}
+            x={plotLeft}
             y={TOP}
             width={plotW}
             height={plotH}
@@ -405,7 +427,7 @@ export function TimeChart({
               const hi = nearestTimeIndex(view, Math.max(drag.from, drag.to))
               setDrag(null)
               // 只是点了一下（没拖开）就不动：重置交给那枚「重置」
-              if (hi - lo >= 2) onZoom(a + lo, a + hi)
+              if (hi - lo >= 2) onZoom(rows.indexOf(view[lo]), rows.indexOf(view[hi]))
             }}
             onPointerCancel={() => setDrag(null)}
           />
@@ -424,15 +446,13 @@ export function TimeChart({
       {hovered && (
         <div
           ref={tip}
-          className="pointer-events-none absolute z-30"
+          className="pointer-events-none absolute z-30 w-max max-w-full"
           // 纵向**跟着鼠标**走（原来是钉在图表顶端）：以光标为中心，再夹在绘图区里 ——
           // 上下两头各留一点，别顶出图外，也别盖住 x 轴标签
           // 横向仍贴着光标那条竖线（靠右时翻到左边），与原来一致
           style={{
-            top: Math.min(Math.max((pointerY ?? plotH / 2) - tipH / 2 + TOP, TOP), Math.max(TOP, TOP + plotH - tipH)),
-            ...(x(hovered.ts) > left + plotW - 150
-              ? { right: w - x(hovered.ts) + 8 }
-              : { left: x(hovered.ts) + 8 }),
+            top: Math.min(Math.max((pointerY ?? plotH / 2) - tipSize.h / 2 + TOP, TOP), Math.max(TOP, TOP + plotH - tipSize.h)),
+            left: Math.max(0, Math.min(x(hovered.ts) + 8 + tipSize.w > w ? x(hovered.ts) - tipSize.w - 8 : x(hovered.ts) + 8, w - tipSize.w)),
           }}
         >
           {renderTooltip ? (

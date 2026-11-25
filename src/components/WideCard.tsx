@@ -2,7 +2,7 @@ import { Card } from "@/components/ui/card"
 import { Country, OfflineMark, RemarkChips, deployed, monthUsage } from "@/components/NodeCard"
 import { TextHighlight } from "@/components/TextHighlight"
 import type { Node } from "@/lib/api"
-import { CYCLE_SHORT, FOREVER, bytes, daysUntil, money, osName, pair, percent, rate, uptime } from "@/lib/format"
+import { cycleLabel, FOREVER, bytes, daysUntil, money, osName, pair, percent, rate, uptime } from "@/lib/format"
 import { remarkChips } from "@/lib/notes"
 import { remarksOnCards, type RemarkPlacement } from "@/lib/site-settings"
 
@@ -32,7 +32,7 @@ function loadPct(node: Node): number | null {
 /** 底注那行小字：价格 / 周期 · 剩余天数 免费与无期限都有占位（「免费」「无期限」，同账单页
  *  与其他卡片档的口径），不空着 */
 function noteText(node: Node): string {
-  const cycle = CYCLE_SHORT[node.billing_cycle]
+  const cycle = cycleLabel(node.billing_cycle, true)
   const price = node.price > 0 ? `价格 ${money(node.price, node.currency)}${cycle ? `/${cycle}` : ""}` : "免费"
   const days = node.expires_in !== undefined ? node.expires_in : daysUntil(node.expires_at)
   const left = days === null || days === undefined ? "无期限"
@@ -52,7 +52,7 @@ const CHIPS = 3
 
 /** 一个读数格：表名在上、读数在中、3px 条压底 `pct` 为 null 时轨道留空（「不知道」≠「用得很少」） */
 function Readout({ label, value, pct, title }: { label: string; value: string; pct: number | null; title?: string }) {
-  const filled = pct === null ? 0 : Math.min(100, Math.max(0, pct))
+  const filled = pct === null || !Number.isFinite(pct) ? 0 : Math.min(100, Math.max(0, pct))
   return (
     <div className="min-w-0" title={title}>
       <div className="truncate text-xs text-muted-foreground">{label}</div>

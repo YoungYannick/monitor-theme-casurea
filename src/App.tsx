@@ -6,6 +6,9 @@ import { CardStyleMenu } from "@/components/CardStyleMenu"
 import { NodeCard } from "@/components/NodeCard"
 import { CompactList } from "@/components/CompactList"
 import { DetailLoader, warmNodeDetail } from "@/components/DetailLoader"
+import { NodeSortMenu } from "@/components/NodeSortMenu"
+import { captureResourceReadings, isResourceSort, savedNodeSort, savedNodeSortDirection, saveNodeSort, sortNodes, type NodeSort, type NodeSortDirection, type NodeSortPreference } from "@/lib/node-sort"
+import { useBillingRates } from "@/lib/use-exchange-rates"
 import { Globe } from "@/components/Globe"
 import { SearchBox, SearchRow } from "@/components/SearchBox"
 import { SummaryCards } from "@/components/Summary"
@@ -145,7 +148,7 @@ const DARK_MEDIA = matchMedia("(prefers-color-scheme: dark)")
  * 系统答案用订阅（useSyncExternalStore）而非拷进 state：首渲染与挂监听之间落下的
  * 一次翻转才不会漏听
  */
-function useTheme(siteMode: ThemeMode) {
+function useTheme(siteMode: ThemeMode, configReady: boolean) {
   const [saved, setSaved] = useState(readThemePreference)
   const system = useSyncExternalStore(
     (notify) => {
@@ -172,6 +175,8 @@ function useTheme(siteMode: ThemeMode) {
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark)
+    document.documentElement.style.colorScheme = dark ? "dark" : "light"
+    if (configReady) { try { localStorage.setItem("casurea:site_mode", siteMode) } catch { /* Current session still works. */ } }
     /**
      * 手机浏览器那一圈（地址栏 / 状态栏）的 `theme-color` 跟着**页面实际用的**明暗走
      * index.html 里那两份是按**系统**明暗挑的静态值，「随北京时间自动」在夜里与系统
@@ -196,7 +201,7 @@ function useTheme(siteMode: ThemeMode) {
     }
     meta.content = color
     head.append(meta)
-  }, [dark])
+  }, [dark, siteMode, configReady])
 
   return [
     dark,
@@ -216,7 +221,7 @@ function useTheme(siteMode: ThemeMode) {
 }
 
 export default function App() {
-  const config = useThemeConfig()
+  const [config, configReady] = useThemeConfig()
   // header / main / footer 三处共用的内容宽度：1280 保底、宽屏放开到后台设的百分比
   const contentMax = `max(1280px, ${config.pageWidth}%)`
   const [latencyChoice, setLatencyChoice] = useState<{ siteDefault: LatencyStyle; style: LatencyStyle } | null>(null)
@@ -231,13 +236,13 @@ export default function App() {
     onChange: chooseLatencyStyle,
   }), [latencyStyle, config.latencyStyle, chooseLatencyStyle])
   // 明暗：站长那一档（`themeMode`）当默认，访客点过顶栏那枚图标就以他的为准
-  const [dark, toggleTheme] = useTheme(config.themeMode)
+  const [dark, toggleTheme] = useTheme(config.themeMode, configReady)
   // 顶栏那枚入口图标（1.25.0 起没有设置项）：挂载即探一次本站约定的 `/chicken/`，
   // 装了那座小鸡农场才出现、没装不占位（判据是内容而不是状态码，见 useLocalFarm）
   const farmUrl = useLocalFarm()
   const [me, setMe] = useState<Me | null>(null)
   const [meError, setMeError] = useState("")
-  const { nodes, error, closed } = useNodes()
+  const { nodes, error, closed, stalled } = useNodes()
   const [route, go, goBilling] = useAppRoute()
   // 路由拆开用：open 喂给详情逻辑、showBilling 喂给账单页（两者互斥，由路由保证）
   const open = route.node
@@ -246,12 +251,17 @@ export default function App() {
   const [group, setGroup] = useState<string | null>(null)
   // 地球侧栏里选中的地区：同理留在这儿
   const [region, setRegion] = useState<string | null>(null)
+  const [regionGroup, setRegionGroup] = useState<string | null>(null)
+  const [nodeSort, setNodeSort] = useState<NodeSortPreference>(() => {
+    const mode = savedNodeSort()
+    return { mode, direction: savedNodeSortDirection(mode) }
+  })
   // 访客自己的两个偏好（见 @/lib/theme-config）：地球看不看、卡片形态（后者没选过跟站长走）
   // ★ 站长那档是「节点地球」的**闸门**：他关掉时 `globeOn` 一律 false、顶栏开关也一起不挂
   const [globeOn, toggleGlobe] = useGlobeVisible(config.globeOn)
   // 异步站点配置也可能关闭地图；清除其筛选，避免没有取消入口或重新开启时复活旧地区
   if (!globeOn && region !== null) setRegion(null)
-  const [cardStyle, chooseStyle] = useCardStyle(config.cardStyle)
+  const [cardStyle, chooseStyle] = useCardStyle(config.cardStyle, configReady)
   // 账单页是真路由（/billing，刷新存活、可分享）：开着才挂入口；「仅管理员」时
   // 还要站长登录（/api/me 的 authed）—— 没权限的人连按钮都不给，路由直达也是 404
   const billingVisible = config.billingOn && (config.billingAccess !== "admin" || !!me?.authed)
@@ -353,25 +363,38 @@ export default function App() {
   //     切分组时地球上的针与地区台数一起变；
   //   · 下面的列表再按地区收窄一层（`listView`）
   // 这样「上头写着 JP 4 台、下面只剩 2 张卡片」不会出现：地球是分组的地图，不是列表的地图
-  const regions = regionView(view.shown, globeOn ? region : null)
+  const regions = regionView(view.shown, globeOn ? region : null, regionGroup)
   // 再叠一层搜索（口径见 @/lib/search）：这一层与地区筛选同一套——**下面那张列表与上面
   // 那行概览卡片一起收窄**，地球仍然是「分组的地图」（它画的是分组里有哪些地方，
   // 不是搜索结果热力图；地区列表点一行照样能把列表收窄到那个地区）
   const found = searchNodes(regions.shown, query)
-  const listView = { ...view, shown: found.shown }
+  const billingExcludeTag = config.billingExcludeOn ? config.billingExcludeTag : ""
+  const billingRates = useBillingRates(found.shown, config.exchangeRates, open === null && !showBilling && (isBudgetLayout(config.listTop) || nodeSort.mode === "monthly"), billingExcludeTag)
+  if (!nodeSort.readings && nodes?.length && isResourceSort(nodeSort.mode)) {
+    setNodeSort({ ...nodeSort, readings: captureResourceReadings(sorted, nodeSort.mode) })
+  }
+  const chooseSort = (mode: NodeSort, direction: NodeSortDirection, refresh = false) => {
+    setCursor(null)
+    const readings = mode === nodeSort.mode && !refresh ? nodeSort.readings
+      : isResourceSort(mode) ? captureResourceReadings(sorted, mode) : undefined
+    setNodeSort({ mode, direction, readings })
+    saveNodeSort(mode, direction)
+  }
+  const ordered = sortNodes(found.shown, nodeSort, billingRates.rates, billingExcludeTag)
+  const listView = { ...view, shown: ordered }
 
   // 搜索键盘导航（↑↓ 选、Enter 开）：下标是「命中列表里的第几台」，不变式与清零时机见 cursor 的声明处
   const moveCursor = (delta: 1 | -1) => {
-    const count = found.shown.length
+    const count = ordered.length
     if (count === 0) return
     setCursor((c) => (c === null ? (delta === 1 ? 0 : count - 1) : (c + delta + count) % count))
   }
   const enterCursor = () => {
-    const node = cursor !== null ? found.shown[cursor] : undefined
+    const node = cursor !== null ? ordered[cursor] : undefined
     if (node) go(node.id)
   }
   // 显示时的当前选中：下标越界（命中数刚变过）就当作没选 —— 读的时候再夹一次，写的时候不用追
-  const cursorId = cursor !== null && cursor < found.shown.length ? found.shown[cursor].id : null
+  const cursorId = cursor !== null && cursor < found.shown.length ? ordered[cursor].id : null
 
   // `/node/{id}` 与 `/billing` 的标签页标题由这里独占（接管逻辑见模块级 ownTitle）
   useEffect(() => {
@@ -394,7 +417,7 @@ export default function App() {
     // 署名也落在屏幕的右下角，而不是紧贴在列表底下浮在半空中
     <LatencyStyleContext value={latencyCurve}>
     <div className="flex min-h-svh flex-col">
-      <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b bg-background/80 backdrop-blur">
         {/* ★ 窄屏横向余量紧：按「站名优先展开、图标自己滑」分 —— 站名 max-w-[55%]、
             搜索钉右边，其余图标装进能横向滑动的条带（与分组标签行同一套做法：
             装不下就滑，不裁字、也不把整页撑宽） */}
@@ -495,6 +518,7 @@ export default function App() {
       {/* ★ 内容宽度：1280 保底、宽屏放开到后台「内容宽度」设置（默认 85%，60–100 可调） —— header 与 footer 同此一条 */}
       <main className="mx-auto w-full flex-1 space-y-5 px-4 py-4 sm:px-6" style={{ maxWidth: contentMax }}>
         {error && <p className="text-sm text-destructive">{error}</p>}
+        {stalled && <p role="status" className="text-sm text-muted-foreground">实时推送中断，正在重连，当前通过轮询更新</p>}
 
         {showBilling ? (
           // 路由直达但没权限（billingOn 关了 / 仅管理员而没登录）：给一枚正经 404，
@@ -547,7 +571,7 @@ export default function App() {
             {hasSummary(config.listTop) && <SummaryCards nodes={found.shown} finance={isBudgetLayout(config.listTop)} searching={found.active} exchangeRates={config.exchangeRates} excludeTag={config.billingExcludeOn ? config.billingExcludeTag : ""} onOpenBilling={billingVisible ? () => goBilling(true) : undefined} />}
             {/* 节点地球：概览卡片之下、列表之上（上游就是这个次序） */}
             {globeOn && (
-              <Globe nodes={view.shown} dark={dark} region={regions.current} onRegion={setRegion} onOpen={go} onWarm={warmDetail} />
+              <Globe nodes={view.shown} flowCenterId={Number(config.mapFlowCenterId) || null} region={regions.current} regionGroup={regions.group} onRegion={(key, group) => { setRegion(key); setRegionGroup(group) }} onOpen={go} onWarm={warmDetail} />
             )}
             {/* 一台都剩不下时说清楚是谁筛没的、去哪儿取消 —— 否则一片空白像站点坏了
                 搜索那一层排在前面：它是访客刚动手的那层 */}
@@ -561,7 +585,7 @@ export default function App() {
                 这个地区里当前没有节点 —— 点上面那一列的「全部」取消筛选
               </p>
             ) : null}
-            <NodeList view={listView} group={group} onGroup={setGroup} onOpen={go} onWarm={warmDetail}
+            <NodeList view={listView} group={group} onGroup={setGroup} sort={nodeSort.mode} sortDirection={nodeSort.direction ?? "asc"} onSort={chooseSort} onOpen={go} onWarm={warmDetail}
               latencyLines={config.pingLines}
               cardStyle={cardStyle}
               historyDays={me.history_days}
@@ -627,8 +651,11 @@ function useProgressive(total: number, first = 24, step = 12): number {
   return limit
 }
 
-function NodeList({ view, group, onGroup, onOpen, onWarm, latencyLines, cardStyle, historyDays, remarkPlacement, terms, cursorId }: {
+function NodeList({ view, group, onGroup, sort, sortDirection, onSort, onOpen, onWarm, latencyLines, cardStyle, historyDays, remarkPlacement, terms, cursorId }: {
   /** 分组求值的结果：groups / current / shown / tabs / total（App 与概览卡片共用一份） */
+  sort: NodeSort
+  sortDirection: NodeSortDirection
+  onSort: (mode: NodeSort, direction: NodeSortDirection, refresh?: boolean) => void
   view: ReturnType<typeof groupView>
   /** 原始选中值（null = 全部，"" = 未分组）：只在归一化后回写时用，见下面的 effect */
   group: string | null
@@ -651,7 +678,9 @@ function NodeList({ view, group, onGroup, onOpen, onWarm, latencyLines, cardStyl
 }) {
   const { groups, current, shown, tabs, total, showTabs } = view
   // 首屏先画一屏的量，剩下的分帧补上（见 useProgressive）
-  const list = shown.slice(0, useProgressive(shown.length))
+  const required = cursorId === null ? 0 : shown.findIndex((node) => node.id === cursorId) + 1
+  const limit = Math.max(useProgressive(shown.length), required)
+  const list = shown.slice(0, limit)
   // 归一化后的值回写给 App（悬空的选中态被回落时纠正一次，见 groupView 的注释）
   useEffect(() => {
     if (current !== group) onGroup(current)
@@ -660,12 +689,13 @@ function NodeList({ view, group, onGroup, onOpen, onWarm, latencyLines, cardStyl
   useEffect(() => {
     if (cursorId === null) return
     document.querySelector(`[data-node-card="${cursorId}"]`)?.scrollIntoView({ block: "nearest" })
-  }, [cursorId])
+  }, [cursorId, limit, shown])
   return (
     <>
       {/* 分组标签行是列表的筛选条 */}
+      {total > 0 && <div className="-mt-2 mb-3 flex items-start justify-end gap-2">
       {showTabs && groups.length > 0 && (
-        <div role="group" aria-label="分组" className="-mx-1 -mt-2 mb-3 flex gap-1 overflow-x-auto px-1 pb-1">
+        <div role="group" aria-label="分组" className="-ml-1 mr-auto flex min-w-0 gap-1 overflow-x-auto px-1 pb-1">
           {tabs.map(([value, label, count]) => (
             <Button
               // 分组名是自由文本，key 带前缀免得与「全部」撞
@@ -682,6 +712,8 @@ function NodeList({ view, group, onGroup, onOpen, onWarm, latencyLines, cardStyl
           ))}
         </div>
       )}
+      <NodeSortMenu value={sort} direction={sortDirection} onPick={onSort} />
+      </div>}
       {total === 0 ? (
         <p className="py-16 text-center text-sm text-muted-foreground">还没有节点</p>
       ) : cardStyle === "compact" ? (

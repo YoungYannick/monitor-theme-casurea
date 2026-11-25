@@ -111,8 +111,9 @@ const WARN_MS = 200
 type Tone = "ok" | "warn" | "bad" | "none"
 
 function toneOf(ms: number | null, loss: number): Tone {
-  if (ms === null) return "none"
-  if (loss >= 5 || ms >= WARN_MS) return "bad"
+  if (loss >= 5) return "bad"
+  if (ms === null) return loss > 0 ? "warn" : "none"
+  if (ms >= WARN_MS) return "bad"
   if (loss > 0 || ms >= GOOD_MS) return "warn"
   return "ok"
 }
@@ -147,7 +148,7 @@ function Sparkline({ points, probeId, className, step }: { points: PingPoint[]; 
     return Math.max(0, Math.min(1, position))
   }
   const path = linePath(withTimeGaps(points, step).map((point) => point !== null && Number.isFinite(point.ts) && typeof point.latency === "number" && Number.isFinite(point.latency)
-    ? { x: ratio(point.ts, first, last) * SPARK_W, y: SPARK_H - 2 - ratio(point.latency, min, max) * (SPARK_H - 4) }
+    ? { x: ratio(point.ts, first, last) * SPARK_W, y: max === min ? SPARK_H / 2 : SPARK_H - 2 - ratio(point.latency, min, max) * (SPARK_H - 4) }
     : null), options)
   return (
     <svg
