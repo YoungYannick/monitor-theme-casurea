@@ -140,6 +140,8 @@
 
 @layer base {
   * { @apply border-border outline-ring/50; }
+  /* 连续曲率圆角；浏览器不支持时按未知属性忽略 */
+  *, *::before, *::after { corner-shape: squircle; }
   /* Reserve the scrollbar's width on every page: without it, leaving a route
      whose content exceeds the fold widens the page. */
   html { scrollbar-gutter: stable; }
@@ -171,6 +173,7 @@
 }
 ::-webkit-scrollbar-thumb {
   border-radius: 999px;
+  corner-shape: squircle;
   background: var(--scrollbar-thumb);
 }
 ::-webkit-scrollbar-thumb:hover {
