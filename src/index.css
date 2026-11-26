@@ -278,6 +278,29 @@ input[type="checkbox"]:focus-visible {
   -webkit-user-select: none;
 }
 .globe-atlas[data-drag="true"] { cursor: grabbing; }
+/* 未按 Ctrl 滚轮时的操作提示：只盖在地图区上，不吃指针事件，触屏设备不出现 */
+.globe-zoom-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 20px;
+  background: color-mix(in srgb, var(--card) 55%, transparent);
+  color: color-mix(in srgb, var(--foreground) 60%, var(--muted-foreground));
+  font-size: 13px;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+.globe-zoom-hint[data-visible="true"] { opacity: 1; }
+@media (hover: none) {
+  .globe-zoom-hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .globe-zoom-hint { transition-duration: 1ms; }
+}
 /* 手机高度贴合投影和地点标签，去掉固定高盒产生的上下空白；控件仍独立占位 */
 @media (max-width: 720px) {
   .globe-atlas { height: var(--globe-mobile-height, 180px); }
@@ -309,25 +332,6 @@ input[type="checkbox"]:focus-visible {
   justify-content: flex-end;
   gap: 8px;
 }
-.globe-controls input {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 96px;
-  min-width: 48px;
-  min-height: 32px;
-  flex: 0 1 96px;
-  margin: 0;
-  background: transparent;
-  --zoom-thumb: color-mix(in srgb, var(--muted-foreground) 65%, var(--card));
-  cursor: ew-resize;
-}
-/* 视觉上收细，输入区域仍保留桌面 32px / 窄屏 40px 的操作高度 */
-.globe-controls input::-webkit-slider-runnable-track { height: 2px; border-radius: 1px; background: color-mix(in srgb, var(--muted-foreground) 24%, transparent); }
-.globe-controls input::-moz-range-track { height: 2px; border-radius: 1px; background: color-mix(in srgb, var(--muted-foreground) 24%, transparent); }
-.globe-controls input::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 10px; height: 10px; margin-top: -4px; border: 0; border-radius: 50%; background: var(--zoom-thumb); }
-.globe-controls input::-moz-range-thumb { width: 10px; height: 10px; border: 0; border-radius: 50%; background: var(--zoom-thumb); }
-.globe-controls input:hover, .globe-controls input:focus-visible { --zoom-thumb: var(--muted-foreground); }
-.globe-controls input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 4px; }
 .globe-controls output { min-width: 40px; font-size: 12px; text-align: right; }
 .globe-zoom-reset { padding-inline: 8px; font-size: 12px; }
 @media (max-width: 1199px) {
@@ -337,9 +341,9 @@ input[type="checkbox"]:focus-visible {
   .globe-mode-button, .globe-spin-button, .globe-zoom-button, .globe-zoom-reset { width: 32px; min-width: 32px; height: 40px; flex: none; padding-inline: 4px; }
   .globe-controls { gap: 4px; }
   .globe-controls output { min-width: 30px; font-size: 11px; }
-  .globe-zoom-reset, .globe-controls input { min-height: 40px; }
+  .globe-zoom-reset { min-height: 40px; }
 }
-/* 极窄屏保留滑条、比例与重置；加减按钮让出横向空间，避免挤到左侧视图按钮 */
+/* 极窄屏保留比例与重置；加减按钮让出横向空间，避免挤到左侧视图按钮 */
 @media (max-width: 359px) {
   .globe-zoom-button { display: none; }
 }
@@ -421,13 +425,12 @@ input[type="checkbox"]:focus-visible {
 .globe-node-name { min-width: 0; flex: 1; overflow-wrap: anywhere; text-align: left; }
 .globe-node-status { flex: none; white-space: nowrap; font-size: 12px; color: var(--globe-pin-offline); }
 [data-online="1"] > .globe-node-status { color: var(--globe-pin-online); }
-.globe-node-overlay { position: fixed; inset: 0; z-index: 79; background: rgb(0 0 0 / 42%); }
 .globe-node-dialog {
   position: fixed;
   z-index: 80;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
+  transform: translate(calc(-50% + var(--dialog-x, 0px)), calc(-50% + var(--dialog-y, 0px)));
   width: min(480px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
   display: flex;
@@ -439,7 +442,19 @@ input[type="checkbox"]:focus-visible {
   color: var(--card-foreground);
   box-shadow: 0 16px 48px rgb(0 0 0 / 24%);
 }
-.globe-node-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.globe-node-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.globe-node-dialog[data-dragging="true"] .globe-node-heading { cursor: grabbing; }
+.globe-node-heading button { cursor: pointer; }
 .globe-node-heading h2 { margin: 0; font-size: 18px; font-weight: 600; }
 .globe-node-heading p { margin: 6px 0 0; font-size: 12px; color: var(--muted-foreground); }
 .globe-node-options { min-height: 0; overflow: auto; overscroll-behavior: contain; }

@@ -1,4 +1,4 @@
-import type { Camera, GlobeNode, GlobeView } from "./globe.ts"
+import { GLOBE_ZOOM, type Camera, type GlobeNode, type GlobeView } from "./globe.ts"
 import type { Ring } from "./world.ts"
 
 export const MAP_VIEW = { w: 460, h: 240, viewBox: "0 0 460 240" } as const
@@ -44,7 +44,7 @@ export function flatCamera(lon = 0, lat = 0, zoom = 100, bounds: MapBounds = MAP
   const cam: FlatCamera = {
     lon: Number.isFinite(lon) ? longitude(lon) : 0,
     lat: Number.isFinite(lat) ? Math.max(-90, Math.min(90, lat)) : 0,
-    zoom: Number.isFinite(zoom) ? Math.max(50, Math.min(150, zoom)) : 100,
+    zoom: Number.isFinite(zoom) ? Math.max(GLOBE_ZOOM.min, Math.min(GLOBE_ZOOM.max, zoom)) : GLOBE_ZOOM.default,
     bounds: validBounds ? { ...bounds } : { ...MAP_BOUNDS },
     at(nodeLon, nodeLat) {
       if (!Number.isFinite(nodeLon) || !Number.isFinite(nodeLat) || nodeLat < -90 || nodeLat > 90) return null

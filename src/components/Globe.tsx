@@ -1,10 +1,10 @@
-import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react"
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react"
 import { ChevronLeft, ChevronRight, Minus, Pause, Play, Plus, X } from "lucide-react"
 import { Dialog, Tooltip } from "radix-ui"
 
 import {
   camera, clampLat, globeNodes, globeProfile, graticule, inkWidthWith, landPaths, layoutLabels,
-  GLOBE_ZOOM, prepareRings, groupedRegionRows, paginateRegionRows, VIEW, wrapLon, zoomView, type Placed, type Quality,
+  GLOBE_ZOOM, prepareRings, groupedRegionRows, paginateRegionRows, VIEW, wrapLon, zoomView, type GlobeView, type Placed, type Quality,
 } from "@/lib/globe"
 import { COARSE_WORLD_OUTLINES, WORLD_OUTLINES } from "@/lib/world"
 import { MAP_DEFAULT_CENTER, flatCamera, flatNodes, mapHitAreas, mapPaths, mapViewport, prepareMapRings, type FlatNode } from "@/lib/map"
@@ -74,6 +74,74 @@ function measureLabel(text: string): number | null {
   }
   if (!labelCtx) return null
   return labelCtx.measureText(text).width
+}
+
+/**
+ * 画布的屏幕换算：与 `<svg preserveAspectRatio="xMidYMid meet">` 一致
+ * 内容按短边等比缩放后在容器里居中，`pad` 是 viewBox 向左撑开的留白
+ */
+function paintTransform(rect: DOMRect, pad: number, w: number, h: number) {
+  const vbW = w + pad * 2
+  const vbH = h
+  const raw = Math.min(rect.width / vbW, rect.height / vbH)
+  const scale = raw > 0 && Number.isFinite(raw) ? raw : 1
+  return { scale, offsetX: (rect.width - vbW * scale) / 2, offsetY: (rect.height - vbH * scale) / 2, pad }
+}
+
+function screenToUser(clientX: number, clientY: number, rect: DOMRect, transform: ReturnType<typeof paintTransform>) {
+  return {
+    x: (clientX - rect.left - transform.offsetX) / transform.scale - transform.pad,
+    y: (clientY - rect.top - transform.offsetY) / transform.scale,
+  }
+}
+
+const clampUnit = (value: number) => Math.max(-1, Math.min(1, value))
+
+/**
+ * 锚点缩放的正射投影逆解：给定锚点经纬度与缩放后的目标用户坐标，求新相机经纬
+ *
+ * 只平移视线（无滚转）恰好两个自由度、两个方程；取转动最小的候选解，
+ * 避免地球突然翻到另一面。无解时调用方退回居中缩放
+ */
+function anchorCamera(anchor: [number, number], view: { lon: number; lat: number }, nextFrame: GlobeView, to: { x: number; y: number }) {
+  const u = (to.x - nextFrame.cx) / nextFrame.r
+  const v = (nextFrame.cy - to.y) / nextFrame.r
+  if (1 - u * u - v * v <= 1e-6) return null
+  const pLat = anchor[1] * Math.PI / 180
+  const pLon = anchor[0] * Math.PI / 180
+  const px = Math.cos(pLat) * Math.sin(pLon)
+  const py = Math.sin(pLat)
+  const pz = Math.cos(pLat) * Math.cos(pLon)
+  const radius = Math.hypot(px, pz)
+  if (radius < 1e-9) return null
+  const lonRatio = u / radius
+  if (Math.abs(lonRatio) > 1) return null
+  const beta = Math.atan2(pz, px)
+  const lonCandidates = [Math.acos(clampUnit(lonRatio)) - beta, -Math.acos(clampUnit(lonRatio)) - beta]
+  const oldLat = view.lat * Math.PI / 180
+  const oldLon = view.lon * Math.PI / 180
+  const oldEx = Math.cos(oldLat) * Math.sin(oldLon)
+  const oldEy = Math.sin(oldLat)
+  const oldEz = Math.cos(oldLat) * Math.cos(oldLon)
+  let best: { lon: number; lat: number; angle: number } | null = null
+  for (const lon of lonCandidates) {
+    const depth = px * Math.sin(lon) + pz * Math.cos(lon)
+    const vertical = Math.hypot(py, depth)
+    if (vertical < 1e-9) continue
+    const latRatio = v / vertical
+    if (Math.abs(latRatio) > 1) continue
+    const gamma = Math.atan2(depth, py)
+    for (const lat of [Math.acos(clampUnit(latRatio)) - gamma, -Math.acos(clampUnit(latRatio)) - gamma]) {
+      const ex = Math.cos(lat) * Math.sin(lon)
+      const ey = Math.sin(lat)
+      const ez = Math.cos(lat) * Math.cos(lon)
+      // 锚点必须落在可见半球
+      if (px * ex + py * ey + pz * ez <= 0.02) continue
+      const angle = Math.acos(clampUnit(oldEx * ex + oldEy * ey + oldEz * ez))
+      if (!best || angle < best.angle) best = { lon, lat, angle }
+    }
+  }
+  return best ? { lon: wrapLon(best.lon * 180 / Math.PI), lat: best.lat * 180 / Math.PI } : null
 }
 
 export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRegion, onOpen, onWarm }: {
@@ -176,12 +244,20 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
   const [focusedKey, setFocusedKey] = useState<string | null>(null)
   const [choiceKey, setChoiceKey] = useState<string | null>(null)
+  const [dialogOffset, setDialogOffset] = useState({ x: 0, y: 0 })
+  const [dialogDragging, setDialogDragging] = useState(false)
   const [inView, setInView] = useState(true)
   const [zoom, setZoom] = useState<number>(GLOBE_ZOOM.default)
   // 完整世界不做纬度平移；放大后限制平移范围，避免拖到两极之外留下空白
   const flatLatLimit = Math.max(0, 90 - 90 / (zoom / 100))
   const flatLat = Math.max(-flatLatLimit, Math.min(flatLatLimit, flatView.lat))
-  const zoomId = useId()
+  // 缩放期间先停自转：锚点缩放要改相机经度，和每帧自转会互相覆盖
+  const [zooming, setZooming] = useState(false)
+  const [zoomHint, setZoomHint] = useState(false)
+  const zoomRef = useRef(zoom)
+  useEffect(() => {
+    zoomRef.current = zoom
+  }, [zoom])
   const mapClipId = useId()
   const flowClipId = useId()
   const flowMaskId = useId()
@@ -192,7 +268,11 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   // 画布实际像素尺寸：3D 用来计算标签留白，2D 用来适配完整地图
   const [box, setBox] = useState<{ w: number; h: number } | null>(null)
   const viewport = useMemo(() => mapViewport(box?.w, box?.h), [box])
-  const globeFrame = useMemo(() => globeFlows.length ? globeFlowView(zoomView(zoom, labelCount)) : zoomView(zoom, labelCount), [zoom, labelCount, globeFlows.length])
+  const globeFrameFor = useCallback((percent: number) => {
+    const base = zoomView(percent, labelCount)
+    return globeFlows.length ? globeFlowView(base) : base
+  }, [labelCount, globeFlows.length])
+  const globeFrame = useMemo(() => globeFrameFor(zoom), [globeFrameFor, zoom])
   const frame = mode === "2d"
     ? { w: viewport.w, h: viewport.h, cx: viewport.w / 2, cy: viewport.bounds.y + viewport.bounds.h / 2, r: viewport.bounds.w / 2 }
     : globeFrame
@@ -203,7 +283,15 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   const sides = useRef(new Map<string, "L" | "R">())
   const host = useRef<HTMLDivElement>(null)
   const controls = useRef<HTMLDivElement>(null)
+  const zoomingTimer = useRef<number | null>(null)
+  const hintTimer = useRef<number | null>(null)
+  // 多指跟踪：双指按下即进入缩放，抬起一指回到单指拖动
+  const pointers = useRef(new Map<number, { x: number; y: number }>())
+  const pinch = useRef<{ distance: number } | null>(null)
+  const zoomAtRef = useRef<(value: number, client?: { x: number; y: number }) => void>(() => {})
+  const flashHintRef = useRef<() => void>(() => {})
   const choiceHost = useRef<HTMLDivElement>(null)
+  const dialogDrag = useRef<{ id: number; x: number; y: number; startX: number; startY: number } | null>(null)
   const returnFocus = useRef<SVGCircleElement | null>(null)
   const drag = useRef<{
     id: number; x: number; y: number; lon: number; lat: number; moved: boolean
@@ -248,7 +336,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
 
   const located = pinned && region !== null
   const rotationOn = rotating && !located
-  const spinning = mode === "3d" && rotating && inView && pageVisible && !dragging && !located && !reduced && !hoveredPoint && !focusedPoint && !choosing
+  const spinning = mode === "3d" && rotating && inView && pageVisible && !dragging && !zooming && !located && !reduced && !hoveredPoint && !focusedPoint && !choosing
   const flowPlaying = inView && pageVisible && !reduced && !dragging && !choosing
 
   useEffect(() => {
@@ -269,7 +357,22 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   }, [spinning, profile.idleMs])
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button || !e.isPrimary || drag.current) return
+    if (e.button) return
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    // 第二根手指落下即进入双指缩放：先放开单指拖拽，避免缩放时地图跟着跑
+    if (pointers.current.size === 2) {
+      drag.current = null
+      setDragging(false)
+      const [first, second] = [...pointers.current.values()]
+      pinch.current = { distance: Math.hypot(first.x - second.x, first.y - second.y) }
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId)
+      } catch {
+        // 指针已经没了：后续 move/up 仍会派发
+      }
+      return
+    }
+    if (pointers.current.size > 2 || drag.current) return
     // ★ 命中要在这里认下来，不能等 click：下面 `setPointerCapture` 之后，浏览器把 click 的
     // target 改写成"抓着指针的那个元素"（也就是这个容器），于是 `closest('[data-node]')`
     // 永远返回空 —— 点针开机器会静默失效（实测过一次，页面什么都不报）
@@ -290,6 +393,26 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   }
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const tracked = pointers.current.get(e.pointerId)
+    if (tracked) {
+      tracked.x = e.clientX
+      tracked.y = e.clientY
+    }
+    const pinchState = pinch.current
+    if (pinchState && pointers.current.size >= 2) {
+      const [first, second] = [...pointers.current.values()]
+      const distance = Math.hypot(first.x - second.x, first.y - second.y)
+      if (distance > 0 && pinchState.distance > 0) {
+        e.preventDefault()
+        const ratio = distance / pinchState.distance
+        // 双指间距变化按比例走，锚点是两指中点
+        if (Math.abs(ratio - 1) > 0.002) {
+          zoomAtRef.current(zoomRef.current * ratio, { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 })
+        }
+        pinchState.distance = distance
+      }
+      return
+    }
     const d = drag.current
     if (!d || e.pointerId !== d.id) return
     const dx = e.clientX - d.x
@@ -313,6 +436,27 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     }
   }
 
+  /** 指针离场：双指少一根时退回单指拖拽，并就地重建基点，免得下一次 move 跳一截 */
+  const releasePointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    pointers.current.delete(e.pointerId)
+    const pinchState = pinch.current
+    if (!pinchState) return
+    if (pointers.current.size >= 2) {
+      const [first, second] = [...pointers.current.values()]
+      pinchState.distance = Math.hypot(first.x - second.x, first.y - second.y)
+      return
+    }
+    pinch.current = null
+    const remaining = [...pointers.current.entries()][0]
+    if (!remaining || drag.current) return
+    const [id, at] = remaining
+    drag.current = {
+      id, x: at.x, y: at.y, lon: mode === "3d" ? view.lon : flatView.lon, lat: mode === "3d" ? view.lat : flatLat,
+      moved: true, pressed: null, target: null,
+    }
+    setDragging(true)
+  }
+
   /**
    * 收尾 `open` 为假是手势被浏览器接管（手机上竖着划滚页面走的是 pointercancel）——
    * 那一下绝不能当成"点了这台机器"
@@ -331,6 +475,42 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     if (open && !d.moved && d.pressed !== null) activatePoint(d.pressed, d.target)
   }
 
+  /** 节点选择窗口：标题栏作拖拽手柄，位移限制在视口内 */
+  const startDialogDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button || (e.target as Element).closest("button")) return
+    dialogDrag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, startX: dialogOffset.x, startY: dialogOffset.y }
+    setDialogDragging(true)
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      // 指针已经没了：后续 move/up 仍会派发
+    }
+  }
+
+  const moveDialogDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dialogDrag.current
+    if (!drag || drag.id !== e.pointerId) return
+    e.preventDefault()
+    const rect = choiceHost.current?.getBoundingClientRect()
+    const limitX = rect ? Math.max(0, (window.innerWidth - rect.width) / 2 - 12) : Number.POSITIVE_INFINITY
+    const limitY = rect ? Math.max(0, (window.innerHeight - rect.height) / 2 - 12) : Number.POSITIVE_INFINITY
+    setDialogOffset({
+      x: Math.max(-limitX, Math.min(limitX, drag.startX + e.clientX - drag.x)),
+      y: Math.max(-limitY, Math.min(limitY, drag.startY + e.clientY - drag.y)),
+    })
+  }
+
+  const endDialogDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dialogDrag.current?.id !== e.pointerId) return
+    dialogDrag.current = null
+    setDialogDragging(false)
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      // 同指针捕获：没抓着就没什么可放的
+    }
+  }
+
   const activatePoint = (key: string, target: SVGCircleElement | null) => {
     const point = pointByKey.get(key)
     if (!point) return
@@ -341,6 +521,8 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     if (members.length === 1) onOpen(members[0])
     else {
       returnFocus.current = target
+      // 每次打开都从居中开始，不会停在上一次拖到的位置
+      setDialogOffset({ x: 0, y: 0 })
       setChoiceKey(key)
     }
   }
@@ -395,25 +577,29 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     const probe = measureLabel("W")
     return probe === null ? undefined : (text: string) => measureLabel(text) as number
   }, [])
-  const globeCanvas = useMemo(() => {
-    const plain = { pad: 0, room: Number.POSITIVE_INFINITY, viewBox: `0 0 ${globeFrame.w} ${globeFrame.h}` }
+  const inkWidth = useMemo(() => points.length
+    ? Math.max(0, ...points.map((point) => inkWidthWith(measured, `${point.code} · ${point.region.label}`)))
+    : 0, [points, measured])
+  // 给定一帧画布尺寸算出视图框；缩放时要预判新半径下的留白是否变化
+  const globeCanvasAt = useCallback((frameValue: GlobeView) => {
+    const plain = { pad: 0, room: Number.POSITIVE_INFINITY, viewBox: `0 0 ${frameValue.w} ${frameValue.h}` }
     if (!box || !points.length) return plain
-    const ink = Math.max(0, ...points.map((point) => inkWidthWith(measured, `${point.code} · ${point.region.label}`)))
-    const scale = Math.min(box.w / globeFrame.w, box.h / globeFrame.h)
+    const scale = Math.min(box.w / frameValue.w, box.h / frameValue.h)
     // 一侧还剩多少余量（用户单位）：宽屏是"容器比画布宽"留下的空白，窄屏约等于 0
     // 手机按最终 viewBox 宽度决定高度，左右余量只由 pad 提供，避免高度与 pad 相互反馈
-    const room = narrow ? 0 : (box.w / scale - globeFrame.w) / 2
+    const room = narrow ? 0 : (box.w / scale - frameValue.w) / 2
     // 撑开最多 36：再长宁可截字（见 labelMax），也不能让地球被挤小一圈 ——
     // 460 的画布撑到 532 已经让圆盘小 13%，再多就不是"复刻"那个地球了
     // 标签距边缘的余量会跟随圆盘半径变化；默认是上游的 123
-    const labelEdge = globeFrame.cx - globeFrame.r - 15
-    const pad = Math.max(0, Math.min(36, ink + 6 - (labelEdge + room)))
+    const labelEdge = frameValue.cx - frameValue.r - 15
+    const pad = Math.max(0, Math.min(36, inkWidth + 6 - (labelEdge + room)))
     return {
       pad,
       room,
-      viewBox: pad ? `${-pad.toFixed(1)} 0 ${(globeFrame.w + pad * 2).toFixed(1)} ${globeFrame.h}` : `0 0 ${globeFrame.w} ${globeFrame.h}`,
+      viewBox: pad ? `${-pad.toFixed(1)} 0 ${(frameValue.w + pad * 2).toFixed(1)} ${frameValue.h}` : `0 0 ${frameValue.w} ${frameValue.h}`,
     }
-  }, [box, points, measured, globeFrame, narrow])
+  }, [box, points.length, inkWidth, narrow])
+  const globeCanvas = useMemo(() => globeCanvasAt(globeFrame), [globeCanvasAt, globeFrame])
   const canvas = mode === "2d"
     ? { pad: 0, room: Number.POSITIVE_INFINITY, viewBox: `0 0 ${viewport.w} ${viewport.h}` }
     : globeCanvas
@@ -426,7 +612,8 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   const pixelScale = box && box.w > 0 && box.h > 0
     ? Math.max((frame.w + canvas.pad * 2) / box.w, frame.h / box.h)
     : 1
-  const markerScale = pixelScale * zoom / 100
+  // 100% 保留信标大小；上限 1.5 倍，避免大幅放大后信标盖满地图
+  const markerScale = pixelScale * Math.min(1.5, zoom / 100)
   /**
    * 标签至画布边缘的距离加上留白，就是这一行最多能有多宽 ——
    * ★ 是 `max(room, pad)`，**不是** `room + pad`（这里踩过一次，`clipped` 那条护栏当时
@@ -473,7 +660,106 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   const projectedAim = aim ? (mode === "3d" ? cam.at(aim[0], aim[1]) : flat.at(aim[0], aim[1])) : null
   const marker = projectedAim && (!("visible" in projectedAim) || projectedAim.visible) ? projectedAim : null
   const flatHome = aim ? { lon: wrapLon(aim[0]), lat: 0 } : MAP_DEFAULT_CENTER
-  const zoomResetDisabled = zoom === GLOBE_ZOOM.default && (mode === "3d" || (flatView.lon === flatHome.lon && flatLat === flatHome.lat))
+  const zoomResetDisabled = Math.abs(zoom - GLOBE_ZOOM.default) < 0.05 && (mode === "3d" || (flatView.lon === flatHome.lon && flatLat === flatHome.lat))
+
+  /**
+   * 带锚点的缩放：给了 `client` 时，鼠标或两指中点下方的地物尽量保持原位
+   * 3D 把锚点换算成一转相机，2D 直接反解相机中心；锚点落在圆盘外或缩放后出盘，退回居中缩放
+   */
+  const applyZoom = (rawZoom: number, client?: { x: number; y: number }) => {
+    // 保留两位小数：触控板单次滚动的增量很小，取整会被吃掉
+    const next = Math.max(GLOBE_ZOOM.min, Math.min(GLOBE_ZOOM.max, Math.round(rawZoom * 100) / 100))
+    const current = zoomRef.current
+    if (next === current) return
+    const rect = host.current?.getBoundingClientRect()
+    if (client && rect && rect.width > 0 && rect.height > 0) {
+      if (mode === "2d") {
+        const at = screenToUser(client.x, client.y, rect, paintTransform(rect, 0, viewport.w, viewport.h))
+        const scale0 = current / 100
+        const scale1 = next / 100
+        const midX = mapBounds.x + mapBounds.w / 2
+        const midY = mapBounds.y + mapBounds.h / 2
+        // 锚点当前的经纬度，以及缩放后把它摆回屏幕原处所需的相机中心
+        const anchorLon = flatView.lon + (at.x - midX) * 360 / (mapBounds.w * scale0)
+        const anchorLat = flatLat - (at.y - midY) * 180 / (mapBounds.h * scale0)
+        const lon = anchorLon - (at.x - midX) * 360 / (mapBounds.w * scale1)
+        const lat = anchorLat + (at.y - midY) * 180 / (mapBounds.h * scale1)
+        const limit = Math.max(0, 90 - 90 / scale1)
+        setFlatView({ lon: wrapLon(lon), lat: Math.max(-limit, Math.min(limit, lat)) })
+      } else {
+        const from = screenToUser(client.x, client.y, rect, paintTransform(rect, canvas.pad, frame.w, frame.h))
+        const nextFrame = globeFrameFor(next)
+        const nextCanvas = globeCanvasAt(nextFrame)
+        const to = screenToUser(client.x, client.y, rect, paintTransform(rect, nextCanvas.pad, nextFrame.w, nextFrame.h))
+        // 反解出仍把锚点留在屏幕原处的相机；纬度超出拖拽范围就放弃锚定，退回居中缩放
+        const nextView = anchorCamera(cam.lonLat({ ...from, k: 1 }), view, nextFrame, to)
+        if (nextView && Math.abs(nextView.lat) <= 78) setView({ lon: nextView.lon, lat: nextView.lat })
+      }
+    }
+    zoomRef.current = next
+    setZoom(next)
+    // 缩放会改写相机，先停一会儿自转，手松开再恢复
+    setZooming(true)
+    if (zoomingTimer.current !== null) window.clearTimeout(zoomingTimer.current)
+    zoomingTimer.current = window.setTimeout(() => {
+      zoomingTimer.current = null
+      setZooming(false)
+    }, 700)
+  }
+
+  const flashHint = () => {
+    setZoomHint(true)
+    if (hintTimer.current !== null) window.clearTimeout(hintTimer.current)
+    hintTimer.current = window.setTimeout(() => {
+      hintTimer.current = null
+      setZoomHint(false)
+    }, 1400)
+  }
+
+  // eslint-disable-next-line react/refs -- 原生事件回调要拿到最新的缩放实现
+  zoomAtRef.current = applyZoom
+  // eslint-disable-next-line react/refs -- 同上
+  flashHintRef.current = flashHint
+
+  // 只接管 Ctrl/Cmd + 滚轮：普通滚轮照常滚页面，这里只闪一下操作提示
+  useEffect(() => {
+    const el = host.current
+    if (!el) return
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1
+        const delta = event.deltaY * unit
+        if (!delta) return
+        zoomAtRef.current(zoomRef.current * Math.exp(-delta * 0.0015), { x: event.clientX, y: event.clientY })
+        return
+      }
+      if (event.deltaX || event.deltaY) flashHintRef.current()
+    }
+    el.addEventListener("wheel", onWheel, { passive: false })
+    return () => el.removeEventListener("wheel", onWheel)
+  }, [])
+
+  // 双指一落下就锁住浏览器手势（pan-y 会把两指动作判成滚动并取消指针）；单指竖向滚动不受影响
+  useEffect(() => {
+    const el = host.current
+    if (!el) return
+    const block = (event: TouchEvent) => {
+      if (event.touches.length >= 2) event.preventDefault()
+    }
+    el.addEventListener("touchstart", block, { passive: false })
+    el.addEventListener("touchmove", block, { passive: false })
+    return () => {
+      el.removeEventListener("touchstart", block)
+      el.removeEventListener("touchmove", block)
+    }
+  }, [])
+
+  useEffect(() => () => {
+    if (zoomingTimer.current !== null) window.clearTimeout(zoomingTimer.current)
+    if (hintTimer.current !== null) window.clearTimeout(hintTimer.current)
+  }, [])
 
   return (
     <Tooltip.Provider delayDuration={0}>
@@ -485,9 +771,9 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
           data-drag={dragging ? "true" : "false"}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
-          onPointerUp={(e) => endDrag(e, true)}
-          onPointerCancel={(e) => endDrag(e, false)}
-          onLostPointerCapture={(e) => endDrag(e, false)}
+          onPointerUp={(e) => { releasePointer(e); endDrag(e, true) }}
+          onPointerCancel={(e) => { releasePointer(e); endDrag(e, false) }}
+          onLostPointerCapture={(e) => { releasePointer(e); endDrag(e, false) }}
         >
           {/* 装饰层单独隐藏，信标提供有名称的键盘入口与多节点选择 */}
           <svg data-map-canvas data-camera-longitude={mode === "2d" ? flatView.lon : view.lon} data-camera-latitude={mode === "2d" ? flatLat : view.lat} data-camera-cx={frame.cx} data-camera-cy={frame.cy} data-camera-r={frame.r} viewBox={canvas.viewBox} preserveAspectRatio="xMidYMid meet" role="group" aria-label="地图节点" focusable="false">
@@ -579,6 +865,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
               ))}
             </g>
           </svg>
+          <div className="globe-zoom-hint" data-visible={zoomHint ? "true" : "false"} aria-hidden="true">按住 Ctrl 滚动滚轮缩放</div>
         </div>
         <div ref={controls} className="globe-toolbar">
           <div className="globe-map-controls" role="group" aria-label="地图显示方式">
@@ -589,32 +876,41 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
             </Button>
           </div>
           <div className="globe-controls" role="group" aria-label="地图缩放">
-            <Button variant="ghost" size="icon-sm" className="globe-zoom-button" aria-label="缩小地球" title="缩小地球" disabled={zoom <= GLOBE_ZOOM.min} onClick={() => setZoom((value) => Math.max(GLOBE_ZOOM.min, value - 10))}>
+            <Button variant="ghost" size="icon-sm" className="globe-zoom-button" aria-label="缩小地球" title="缩小地球" disabled={zoom <= GLOBE_ZOOM.min} onClick={() => setZoom((value) => Math.max(GLOBE_ZOOM.min, Math.round(value / 1.25)))}>
               <Minus />
             </Button>
-            <input id={zoomId} type="range" min={GLOBE_ZOOM.min} max={GLOBE_ZOOM.max} step={GLOBE_ZOOM.step} value={zoom} aria-label="地球缩放比例" aria-valuetext={`${zoom}%`} onChange={(event) => setZoom(Number(event.target.value))} />
-            <Button variant="ghost" size="icon-sm" className="globe-zoom-button" aria-label="放大地球" title="放大地球" disabled={zoom >= GLOBE_ZOOM.max} onClick={() => setZoom((value) => Math.min(GLOBE_ZOOM.max, value + 10))}>
+            <Button variant="ghost" size="icon-sm" className="globe-zoom-button" aria-label="放大地球" title="放大地球" disabled={zoom >= GLOBE_ZOOM.max} onClick={() => setZoom((value) => Math.min(GLOBE_ZOOM.max, Math.round(value * 1.25)))}>
               <Plus />
             </Button>
-            <output htmlFor={zoomId} className="tnum">{zoom}%</output>
+            <output className="tnum" aria-label={`当前缩放 ${Math.round(zoom)}%`}>{Math.round(zoom)}%</output>
             <Button variant="ghost" size="sm" className="globe-zoom-reset" aria-label="重置地球缩放" title="恢复默认缩放比例" disabled={zoomResetDisabled} onClick={() => { setZoom(GLOBE_ZOOM.default); if (mode === "2d") setFlatView(flatHome) }}>重置</Button>
           </div>
         </div>
       </div>
 
-      <Dialog.Root open={choosing} onOpenChange={(open) => { if (!open) setChoiceKey(null) }}>
+      <Dialog.Root open={choosing} modal={false} onOpenChange={(open) => { if (!open) setChoiceKey(null) }}>
         <Dialog.Portal>
-          <Dialog.Overlay className="globe-node-overlay" data-map-node-overlay />
-          <Dialog.Content ref={choiceHost} id={choiceId} className="globe-node-dialog" data-map-node-dialog aria-modal="true" onOpenAutoFocus={(event) => {
-            event.preventDefault()
-            choiceHost.current?.querySelector<HTMLButtonElement>("[data-map-node-option]")?.focus()
-          }} onCloseAutoFocus={(event) => {
-            event.preventDefault()
-            if (!host.current?.isConnected) return
-            if (returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true })
-            else controls.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true })
-          }}>
-            <div className="globe-node-heading">
+          <Dialog.Content
+            ref={choiceHost}
+            id={choiceId}
+            className="globe-node-dialog"
+            data-map-node-dialog
+            data-dragging={dialogDragging ? "true" : "false"}
+            style={{ "--dialog-x": `${dialogOffset.x}px`, "--dialog-y": `${dialogOffset.y}px` } as CSSProperties}
+            onInteractOutside={(event) => event.preventDefault()}
+            onPointerDownOutside={(event) => event.preventDefault()}
+            onOpenAutoFocus={(event) => {
+              event.preventDefault()
+              choiceHost.current?.querySelector<HTMLButtonElement>("[data-map-node-option]")?.focus()
+            }}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault()
+              if (!host.current?.isConnected) return
+              if (returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true })
+              else controls.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true })
+            }}
+          >
+            <div className="globe-node-heading" onPointerDown={startDialogDrag} onPointerMove={moveDialogDrag} onPointerUp={endDialogDrag} onPointerCancel={endDialogDrag}>
               <div>
                 <Dialog.Title>选择节点</Dialog.Title>
                 <Dialog.Description>{choicePoint?.region.label} · {choiceMembers.length} 台节点，选择要查看的详情</Dialog.Description>

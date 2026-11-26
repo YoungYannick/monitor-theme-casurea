@@ -1,4 +1,4 @@
-import { wrapLon, type Camera, type GlobeNode, type GlobeView, type Pt } from "./globe.ts"
+import { VIEW, wrapLon, type Camera, type GlobeNode, type GlobeView, type Pt } from "./globe.ts"
 import type { FlatCamera, MapBounds } from "./map.ts"
 
 type Point = { x: number; y: number }
@@ -16,9 +16,9 @@ type PreparedGlobeFlow = Pick<FlowPath, "key" | "active" | "delay"> & { samples:
 const GLOBE_FLOW_LIFT = 0.34
 const xy = ({ x, y }: Point) => `${x.toFixed(2)} ${y.toFixed(2)}`
 
-/** 给最高空间弧预留上下留白；球体半径与缩放口径仍由 zoomView 决定 */
+/** 给最高空间弧预留上下留白；放大时按基准半径封顶，否则画布跟着半径长会抵消缩放 */
 export function globeFlowView(view: GlobeView): GlobeView {
-  const margin = view.r * GLOBE_FLOW_LIFT
+  const margin = Math.min(view.r, VIEW.r) * GLOBE_FLOW_LIFT
   return { ...view, cy: view.cy + margin, h: view.h + margin * 2 }
 }
 
