@@ -138,26 +138,35 @@ function nodeInfo(node: Node): ReactNode {
   )
 }
 
+/** 剩余天数映射到紧迫色：0 天警告红，30 天琥珀，中间连续过渡 */
+function urgencyColor(days: number) {
+  const t = Math.min(Math.max(days, 0), 30) / 30
+  return `color-mix(in oklch, var(--danger) ${Math.round((1 - t) * 100)}%, var(--warn))`
+}
+
 /** 一行的状态徽章与到期文案——纯到期维度（免费在价格列、一次性在周期列各自表达）；
- * 「即将到期」橙字配「N 天后」，与「已到期」红字配「N 天前」对称 */
+ * 「即将到期」随剩余天数由橙转红，「已到期」用警告红实心底 */
 function statusCell(row: BillingRow) {
   switch (row.status) {
     case "expired":
       return (
         <>
-          <Badge variant="destructive" className="font-normal">已到期</Badge>
+          <Badge variant="outline" className="border-danger bg-danger font-normal text-white">已到期</Badge>
           <span className="text-xs text-muted-foreground">{row.daysLeft !== null ? `${-row.daysLeft} 天前` : ""}</span>
         </>
       )
-    case "expiring":
-      return row.daysLeft === 0
-        ? <Badge variant="secondary" className="font-normal">今天到期</Badge>
-        : (
-          <>
-            <Badge variant="outline" className="border-orange-500/40 font-normal text-orange-600 dark:text-orange-400">即将到期</Badge>
-            <span className="text-xs text-muted-foreground">{row.daysLeft} 天后</span>
-          </>
-        )
+    case "expiring": {
+      const tone = urgencyColor(row.daysLeft ?? 30)
+      if (row.daysLeft === 0) {
+        return <Badge variant="outline" className="border-danger/50 bg-danger/12 font-normal text-danger">今天到期</Badge>
+      }
+      return (
+        <>
+          <Badge variant="outline" className="font-normal" style={{ color: tone, borderColor: `color-mix(in oklch, ${tone} 45%, transparent)` }}>即将到期</Badge>
+          <span className="text-xs" style={{ color: tone }}>{row.daysLeft} 天后</span>
+        </>
+      )
+    }
     case "active":
       return <Badge variant="secondary" className="font-normal">未到期</Badge>
     case "noexpiry":
@@ -325,10 +334,10 @@ function BillingCalendar({
                     } ${due ? "font-medium text-foreground" : ""} ${key < todayKey ? "text-muted-foreground/50" : ""} ${
                       key === todayKey ? "ring-1 ring-inset ring-foreground/60" : ""
                     } ${picked === key ? "ring-1 ring-primary/60" : ""}`}
-                    style={due && heat ? { background: `color-mix(in oklab, var(--foreground) ${Math.round(heat * 40)}%, transparent)` } : undefined}
+                    style={due && heat ? { background: `color-mix(in oklab, var(--warn) ${Math.round(heat * 45)}%, transparent)` } : undefined}
                   >
                     {d}
-                    {due && <span aria-hidden className="tnum absolute right-0.5 top-0.5 text-[10px] font-medium leading-none text-destructive">{due.length}</span>}
+                    {due && <span aria-hidden className="tnum absolute right-0.5 top-0.5 text-[10px] font-medium leading-none text-danger">{due.length}</span>}
                   </div>
                 )
                 if (!due) return <div key={key}>{cell}</div>
@@ -386,8 +395,7 @@ function BillingCalendar({
                   <ul className="flex flex-wrap gap-2">
                     {band.items.map(({ n, days }) => {
                       const row = rowById.get(n.id)
-                      // 紧迫度：0 天红、≤3 天橙、≤7 天黄、其余常规
-                      const bar = days === 0 ? "bg-destructive" : days <= 3 ? "bg-orange-500" : days <= 7 ? "bg-yellow-500" : "bg-primary/60"
+                      const tone = urgencyColor(days)
                       return (
                         <li key={n.id} className="min-w-0 flex-[1_1_14rem] max-w-[28rem]">
                           <button
@@ -396,14 +404,14 @@ function BillingCalendar({
                           >
                             <div className="flex items-center gap-2">
                               <span className="min-w-0 flex-1 truncate text-sm font-medium">{n.name}</span>
-                              <span className={`tnum shrink-0 text-xs font-medium ${days === 0 ? "text-destructive" : days <= 3 ? "text-orange-500" : "text-muted-foreground"}`}>
+                              <span className="tnum shrink-0 text-xs font-medium" style={{ color: tone }}>
                                 {days === 0 ? "今天" : `${days} 天后`}
                               </span>
                             </div>
                             <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
                               <span className="tnum shrink-0">{n.expires_at!.slice(5, 10)}</span>
                               <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-                                <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.max(6, 100 - (days / 30) * 100)}%` }} />
+                                <div className="h-full rounded-full" style={{ width: `${Math.max(6, 100 - (days / 30) * 100)}%`, background: tone }} />
                               </div>
                               <span className="tnum shrink-0">{n.expires_at!.slice(0, 4)}</span>
                             </div>

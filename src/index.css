@@ -44,6 +44,8 @@
   /* 进度条按"越满越危险"上色，所以这里有真正的绿与琥珀：单色阶表达不了严重度 */
   --ok: oklch(0.6 0.15 155);
   --warn: oklch(0.62 0.15 70);
+  /* 账单页的到期警告红：与单色的 destructive 区分，亮暗都保持真正的红 */
+  --danger: oklch(0.52 0.19 25);
   /* 地图沿用主题灰阶，陆地与海面通过明度区分，流向与中心圈使用正文色系 */
   --globe-ocean: var(--muted);
   --globe-land: color-mix(in oklch, var(--foreground) 20%, var(--card));
@@ -92,6 +94,7 @@
   --compare-soft: oklch(0.42 0 0);
   --ok: oklch(0.74 0.14 155);
   --warn: oklch(0.8 0.13 75);
+  --danger: oklch(0.58 0.19 25);
   /* 暗色陆地比海面亮，岸线与流向复用主题弱化文字色 */
   --globe-flow: var(--muted-foreground);
   --globe-rim: rgba(8, 8, 8, 0.36);
@@ -132,6 +135,7 @@
   --color-chart-5: var(--chart-5);
   --color-ok: var(--ok);
   --color-warn: var(--warn);
+  --color-danger: var(--danger);
 }
 
 @layer base {
