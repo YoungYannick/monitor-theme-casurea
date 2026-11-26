@@ -151,7 +151,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
   const [smooth, setSmooth] = useState(false)
   const { style: latencyStyle, siteDefault, onChange: chooseLatencyStyle } = useLatencyStyle()
   const { connectGaps, smooth: smoothLines } = latencyLineOptions(latencyStyle)
-  const [latencySelection, setLatencySelection] = useState<LatencyChartSelection>({ view: "rows", ids: [], solo: null, colors: {}, hidden: [] })
+  const [latencySelection, setLatencySelection] = useState<LatencyChartSelection>({ view: "rows", ids: [], solo: null, hidden: [] })
   const [data, setData] = useState<{ metrics: Point[]; ping: PingPoint[]; probes: Probes; loss?: Loss; step?: number } | null>(null)
   // 请求被拒（hub 限制并发历史窗口会答 503）与空窗口是两回事，分开记
   const [failed, setFailed] = useState("")

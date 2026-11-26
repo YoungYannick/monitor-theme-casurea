@@ -38,6 +38,9 @@
   --chart-3: oklch(0.46 0 0);
   --chart-4: oklch(0.54 0 0);
   --chart-5: oklch(0.62 0 0);
+  /* 多线对比灰阶的两端：strong 对比最强、soft 最淡；按实际线条数在两者之间动态分配 */
+  --compare-strong: oklch(0.18 0 0);
+  --compare-soft: oklch(0.7 0 0);
   /* 进度条按"越满越危险"上色，所以这里有真正的绿与琥珀：单色阶表达不了严重度 */
   --ok: oklch(0.6 0.15 155);
   --warn: oklch(0.62 0.15 70);
@@ -84,6 +87,9 @@
   --chart-3: oklch(0.73 0 0);
   --chart-4: oklch(0.62 0 0);
   --chart-5: oklch(0.52 0 0);
+  /* 暗色按纯黑卡片单独取值：最强端接近白、最弱端仍保证在卡片上可读 */
+  --compare-strong: oklch(0.96 0 0);
+  --compare-soft: oklch(0.42 0 0);
   --ok: oklch(0.74 0.14 155);
   --warn: oklch(0.8 0.13 75);
   /* 暗色陆地比海面亮，岸线与流向复用主题弱化文字色 */

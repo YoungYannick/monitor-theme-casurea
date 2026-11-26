@@ -24,10 +24,11 @@ function suppressLongPressClick() {
 }
 
 /** 单击显隐，双击或触屏长按独看，保持一枚简约图例按钮 */
-export function ProbeLegendButton({ id, name, stroke, loss, shown, highlighted, onToggle, onSolo, onHighlight, row = false }: {
+export function ProbeLegendButton({ id, name, stroke, width, loss, shown, highlighted, onToggle, onSolo, onHighlight, row = false }: {
   id: number
   name: string
   stroke: string
+  width?: number
   loss: number
   shown: boolean
   highlighted: boolean
@@ -93,7 +94,7 @@ export function ProbeLegendButton({ id, name, stroke, loss, shown, highlighted, 
       style={{ WebkitTouchCallout: "none" }}
     >
       {!row && <svg width="14" height="6" className="shrink-0" aria-hidden>
-        <line x1="0" y1="3" x2="14" y2="3" stroke={stroke} strokeWidth="2" />
+        <line x1="0" y1="3" x2="14" y2="3" stroke={stroke} strokeWidth={width ?? 2} />
       </svg>}
       <span className="truncate">{name}</span>
       {!row && loss > 0 && (

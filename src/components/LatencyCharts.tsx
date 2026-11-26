@@ -6,9 +6,22 @@ import { ProbeLegendButton } from "@/components/ProbeLegendButton"
 import { ProbePicker } from "@/components/ProbePicker"
 
 type Probe = { id: number; name: string; loss: number; points: { ts: number; latency: number | null }[] }
-export type LatencyChartSelection = { view: "rows" | "compare"; ids: number[]; solo: number | null; colors: Record<number, number>; hidden: number[] }
+export type LatencyChartSelection = { view: "rows" | "compare"; ids: number[]; solo: number | null; hidden: number[] }
 const COMPARE_LIMIT = 6
-const COMPARE_COLORS = [100, 0, 80, 20, 60, 40].map((weight) => weight === 100 ? "var(--chart-1)" : weight === 0 ? "var(--chart-5)" : `color-mix(in oklch, var(--chart-1) ${weight}%, var(--chart-5))`)
+/** 线宽从图表标准 1.5px 起每档略粗一点，只做明度之外的辅助 */
+const COMPARE_WIDTH_STEP = 0.15
+
+/** 按当前线条数在两端灰阶间均匀分配：条数越少，相邻明度差越大 */
+function compareStyle(index: number, count: number) {
+  const span = Math.max(1, count - 1)
+  const mix = Math.round((Math.min(index, span) / span) * 100)
+  const color = mix === 0
+    ? "var(--compare-strong)"
+    : mix === 100
+      ? "var(--compare-soft)"
+      : `color-mix(in oklch, var(--compare-strong) ${100 - mix}%, var(--compare-soft))`
+  return { stroke: color, width: 1.5 + Math.min(index, COMPARE_LIMIT - 1) * COMPARE_WIDTH_STEP }
+}
 const milliseconds = (value: number) => `${Number(value.toFixed(1))} ms`
 const lossLabel = (value: number) => Number.isFinite(value) && value > 0 ? value < 1 ? "<1%" : `${Math.min(100, Math.round(value))}%` : "0%"
 
@@ -67,7 +80,10 @@ export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, 
   const shareAxis = useCallback((left: number) => setAxisLeft((previous) => Math.max(previous, left)), [])
   const highlight = hovered ?? focused
   const activeHighlight = compared.includes(highlight ?? -1) ? highlight : null
-  const style = (id: number) => ({ stroke: COMPARE_COLORS[state.colors[id] ?? 0] ?? COMPARE_COLORS[0] })
+  const style = (id: number) => {
+    const at = selected.indexOf(id)
+    return compareStyle(at >= 0 ? at : 0, at >= 0 ? selected.length : 1)
+  }
   const singleStyle = () => ({ stroke: "var(--chart-1)" })
   const lineKey = (id: number) => `${smooth ? "su" : "tu"}${id}`
   const bandKey = (id: number) => `${smooth ? "cu" : "bu"}${id}`
@@ -75,27 +91,16 @@ export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, 
     const active = previous.ids.filter((one) => probes.some((probe) => probe.id === one))
     if (previous.ids.includes(id)) return { ...previous, ids: previous.ids.filter((one) => one !== id), hidden: previous.hidden.filter((one) => one !== id), solo: null }
     if (active.length >= COMPARE_LIMIT) return previous
-    const used = active.map((one) => previous.colors[one])
-    const oldColor = previous.colors[id]
-    const color = oldColor !== undefined && !used.includes(oldColor) ? oldColor : COMPARE_COLORS.findIndex((_, index) => !used.includes(index))
-    return { ...previous, ids: [...active, id], colors: { ...previous.colors, [id]: color }, hidden: previous.hidden.filter((one) => one !== id), solo: null }
+    return { ...previous, ids: [...active, id], hidden: previous.hidden.filter((one) => one !== id), solo: null }
   })
-  const clearSelection = () => onStateChange({ ids: [], solo: null, view: "rows", colors: {}, hidden: [] })
+  const clearSelection = () => onStateChange({ ids: [], solo: null, view: "rows", hidden: [] })
   const selectAll = () => {
     if (probes.length === 0 || probes.length > COMPARE_LIMIT) return
     if (selected.length === probes.length) { clearSelection(); return }
     onStateChange((previous) => {
       const ids = probes.map((probe) => probe.id)
       const order = [...previous.ids.filter((id) => ids.includes(id)), ...ids.filter((id) => !previous.ids.includes(id))]
-      const colors: Record<number, number> = {}
-      const used: number[] = []
-      for (const id of order) {
-        const oldColor = previous.colors[id]
-        const color = oldColor !== undefined && !used.includes(oldColor) ? oldColor : COMPARE_COLORS.findIndex((_, index) => !used.includes(index))
-        colors[id] = color
-        used.push(color)
-      }
-      return { ...previous, ids, colors, hidden: [], solo: null }
+      return { ...previous, ids: order, hidden: [], solo: null }
     })
   }
   const lookAt = (id: number) => onStateChange((previous) => ({ ...previous, solo: id, view: "compare", hidden: previous.hidden.filter((one) => one !== id) }))
@@ -174,12 +179,15 @@ export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, 
             <div className="h-56 w-full text-muted-foreground">
               <TimeChart {...lineOptions} series={[
                 ...(comparedProbes.length === 1 ? [{ key: bandKey(comparedProbes[0].id), name: comparedProbes[0].name, color: style(comparedProbes[0].id).stroke, band: true }] : []),
-                ...[...comparedProbes].sort((a, b) => Number(a.id === activeHighlight) - Number(b.id === activeHighlight)).map((probe): ChartSeries => ({ key: lineKey(probe.id), name: probe.name, color: style(probe.id).stroke, opacity: activeHighlight === null || probe.id === activeHighlight ? 1 : 0.18, width: probe.id === activeHighlight ? 2.5 : 1.5 })),
+                ...[...comparedProbes].sort((a, b) => Number(a.id === activeHighlight) - Number(b.id === activeHighlight)).map((probe): ChartSeries => {
+                  const line = style(probe.id)
+                  return { key: lineKey(probe.id), name: probe.name, color: line.stroke, opacity: activeHighlight === null || probe.id === activeHighlight ? 1 : 0.18, width: line.width }
+                }),
               ]} label="节点延迟对比" renderTooltip={(row) => <PingTooltip active label={row.ts} rowByTs={rowByTs} probes={activeHighlight === null ? comparedProbes : comparedProbes.filter((probe) => probe.id === activeHighlight)} smooth={smooth} style={style} />} />
             </div>
           ) : <p className="py-8 text-center text-sm text-muted-foreground">{legendProbes.length > 0 ? "当前线路均已隐藏" : "没有选中的线路"}</p>}
           <div data-probe-legend className="flex flex-wrap items-center justify-center gap-1.5">
-            {legendProbes.map((probe) => <ProbeLegendButton key={probe.id} id={probe.id} name={probe.name} stroke={style(probe.id).stroke} loss={probe.loss} shown={compared.includes(probe.id)} highlighted={probe.id === activeHighlight} onToggle={() => toggleShown(probe.id)} onSolo={() => lookAt(probe.id)} onHighlight={(kind, active) => { if (kind === "hover") setHovered(active ? probe.id : null); else setFocused(active ? probe.id : null) }} />)}
+            {legendProbes.map((probe) => <ProbeLegendButton key={probe.id} id={probe.id} name={probe.name} stroke={style(probe.id).stroke} width={style(probe.id).width} loss={probe.loss} shown={compared.includes(probe.id)} highlighted={probe.id === activeHighlight} onToggle={() => toggleShown(probe.id)} onSolo={() => lookAt(probe.id)} onHighlight={(kind, active) => { if (kind === "hover") setHovered(active ? probe.id : null); else setFocused(active ? probe.id : null) }} />)}
           </div>
         </div>
       )}
