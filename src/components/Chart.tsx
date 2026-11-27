@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 
 import { ChartTooltip } from "@/components/ChartTooltip"
 import { linePath } from "@/lib/chart-path"
@@ -134,6 +134,22 @@ export function TimeChart({
   const [pointerY, setPointerY] = useState<number | null>(null)
   const [tipSize, setTipSize] = useState({ w: 0, h: 0 })
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null)
+  // 按下即记录起点：拖动就扩选区，抬手时不足两个桶就不缩放
+  const press = useRef<{ id: number; x: number; y: number; at: number; last: number; moved: boolean } | null>(null)
+
+  // 横向拖动才拦页面滚动；纵向仍让页面滚。否则浏览器会把拖动判成 pan 并发出 pointercancel，选框中途丢失
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    const onTouchMove = (event: TouchEvent) => {
+      const p = press.current
+      const touch = event.touches[0]
+      if (!p || !touch) return
+      if (Math.abs(touch.clientX - p.x) > Math.abs(touch.clientY - p.y)) event.preventDefault()
+    }
+    el.addEventListener("touchmove", onTouchMove, { passive: false })
+    return () => el.removeEventListener("touchmove", onTouchMove)
+  }, [])
 
   // 卡片高度：用来把它夹在绘图区里（别顶出去）悬停的那一格变了才量一次
   useLayoutEffect(() => {
@@ -327,9 +343,11 @@ export function TimeChart({
   const sel = drag && view.length > 0
     ? { lo: nearestTimeIndex(view, Math.min(drag.from, drag.to)), hi: nearestTimeIndex(view, Math.max(drag.from, drag.to)) }
     : null
+  // 首次渲染还没量到 tip 尺寸：先藏起来，等量完再定位，避免 right 边界被算到容器外面
+  const tipPlaced = tipSize.w > 0 && tipSize.h > 0
 
   return (
-    <div ref={box} data-chart="" data-plot-left={plotLeft} data-connect-gaps={connectGaps} data-smooth-lines={smoothLines} className="relative h-full w-full" onMouseLeave={() => { setHover(null); setPointerY(null) }}>
+    <div ref={box} data-chart="" data-plot-left={plotLeft} data-connect-gaps={connectGaps} data-smooth-lines={smoothLines} className="relative h-full w-full select-none overflow-x-clip" onMouseLeave={() => { setHover(null); setPointerY(null) }}>
       {w > 0 && h > 0 && (
         <svg width={w} height={h} role="img" aria-label={label} className="overflow-visible">
           <defs>
@@ -407,8 +425,8 @@ export function TimeChart({
           {hovered && !sel && (
             <line x1={x(hovered.ts)} x2={x(hovered.ts)} y1={TOP} y2={TOP + plotH} className="stroke-border" strokeWidth={1} />
           )}
-          {/* 拖选中的那一段（松手才真的缩放） */}
-          {sel && view.length > 1 && (
+          {/* 拖选中的那一段（松手才真的缩放）；轻点没有跨桶就不画选区 */}
+          {sel && sel.hi > sel.lo && view.length > 1 && (
             <rect
               x={x(view[sel.lo].ts)}
               y={TOP}
@@ -435,25 +453,43 @@ export function TimeChart({
               setPointerY(Math.min(Math.max(e.clientY - rect.top, 0), rect.height))
             }}
             onPointerDown={(e) => {
-              if (!onZoom || view.length < 3) return
+              if (view.length === 0) return
               // 捕获失败不该让整段拖选失效（指针已经消失、或合成事件没有有效 id 时会抛）
               try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* 无所谓 */ }
               const at = view[indexAt(e.clientX, e.currentTarget)].ts
-              setDrag({ from: at, to: at })
+              const canZoom = !!onZoom && view.length >= 3
+              // 按下就算拖选起点（鼠标/触摸一致）；触摸同时先把该点数值亮出来
+              press.current = { id: e.pointerId, x: e.clientX, y: e.clientY, at, last: at, moved: canZoom }
+              if (e.pointerType !== "mouse") setHover(at)
+              if (canZoom) setDrag({ from: at, to: at })
             }}
             onPointerMove={(e) => {
-              if (!drag || view.length === 0) return
-              setDrag({ ...drag, to: view[indexAt(e.clientX, e.currentTarget)].ts })
+              if (view.length === 0) return
+              const at = view[indexAt(e.clientX, e.currentTarget)].ts
+              const p = press.current
+              if (e.pointerType !== "mouse" && !drag) setHover(at)
+              if (!p || p.id !== e.pointerId || !p.moved) return
+              p.last = at
+              setDrag({ from: p.at, to: at })
             }}
             onPointerUp={() => {
-              if (!drag || !onZoom) return
-              const lo = nearestTimeIndex(view, Math.min(drag.from, drag.to))
-              const hi = nearestTimeIndex(view, Math.max(drag.from, drag.to))
+              const p = press.current
+              press.current = null
+              if (!p) return
+              // 没拖开就是"看数值"，保留浮层，不缩放
+              if (!p.moved) {
+                setDrag(null)
+                return
+              }
+              const lo = nearestTimeIndex(view, Math.min(p.at, p.last))
+              const hi = nearestTimeIndex(view, Math.max(p.at, p.last))
               setDrag(null)
-              // 只是点了一下（没拖开）就不动：重置交给那枚「重置」
-              if (hi - lo >= 2) onZoom(rows.indexOf(view[lo]), rows.indexOf(view[hi]))
+              if (onZoom && hi - lo >= 2) onZoom(rows.indexOf(view[lo]), rows.indexOf(view[hi]))
             }}
-            onPointerCancel={() => setDrag(null)}
+            onPointerCancel={() => {
+              press.current = null
+              setDrag(null)
+            }}
           />
         </svg>
       )}
@@ -467,7 +503,7 @@ export function TimeChart({
           重置
         </button>
       )}
-      {hovered && (
+      {hovered && !drag && (
         <div
           ref={tip}
           className="pointer-events-none absolute z-30 w-max max-w-full"
@@ -475,8 +511,9 @@ export function TimeChart({
           // 上下两头各留一点，别顶出图外，也别盖住 x 轴标签
           // 横向仍贴着光标那条竖线（靠右时翻到左边），与原来一致
           style={{
-            top: Math.min(Math.max((pointerY ?? plotH / 2) - tipSize.h / 2 + TOP, TOP), Math.max(TOP, TOP + plotH - tipSize.h)),
-            left: Math.max(0, Math.min(x(hovered.ts) + 8 + tipSize.w > w ? x(hovered.ts) - tipSize.w - 8 : x(hovered.ts) + 8, w - tipSize.w)),
+            top: tipPlaced ? Math.min(Math.max((pointerY ?? plotH / 2) - tipSize.h / 2 + TOP, TOP), Math.max(TOP, TOP + plotH - tipSize.h)) : TOP,
+            left: tipPlaced ? Math.max(0, Math.min(x(hovered.ts) + 8 + tipSize.w > w ? x(hovered.ts) - tipSize.w - 8 : x(hovered.ts) + 8, w - tipSize.w)) : 0,
+            visibility: tipPlaced ? undefined : "hidden",
           }}
         >
           {renderTooltip ? (

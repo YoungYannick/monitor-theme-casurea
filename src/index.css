@@ -656,6 +656,7 @@ input[type="checkbox"]:focus-visible {
 .globe-reg::before { content: ""; position: absolute; inset: -4px 0; border-radius: 4px; }
 
 /* Summary detail panels keep their heading and notes outside the scrollable list. */
+[data-chart] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .budget-detail { width: max-content; max-width: min(28rem, calc(100vw - 2rem)); overflow-y: hidden; }
 .detail-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--muted-foreground) transparent; }
 .detail-scroll[data-detail-more] { mask-image: linear-gradient(to bottom, black calc(100% - 14px), transparent); }

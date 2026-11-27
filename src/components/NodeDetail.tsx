@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import { Info } from "lucide-react"
+import { Popover } from "radix-ui"
 
 import { TimeChart } from "@/components/Chart"
 import { LatencyCharts, type LatencyChartSelection } from "@/components/LatencyCharts"
@@ -120,19 +121,6 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
   // 名称行那枚状态徽章（在线/离线 + 时长）；从未接入时为 null
   const status = onlineStatus(node)
   const [peekOpen, setPeekOpen] = useState(false)
-  const peekRef = useRef<HTMLSpanElement | null>(null)
-  // 摊开时点别处 / Esc 收起
-  useEffect(() => {
-    if (!peekOpen) return
-    const onDown = (e: PointerEvent) => {
-      const el = e.target
-      if (!(el instanceof globalThis.Node) || !peekRef.current?.contains(el)) setPeekOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPeekOpen(false) }
-    document.addEventListener("pointerdown", onDown)
-    document.addEventListener("keydown", onKey)
-    return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey) }
-  }, [peekOpen])
   // 就地展开只为看延迟，页签默认落在延迟而不是资源
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>(embedded ? "latency" : "resources")
   // 资源页签多一档「实时」（默认）：快照走前端自攒缓冲，历史档才走 /metrics 请求
@@ -610,37 +598,42 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
                   <span data-note-strip className="hidden min-w-0 flex-1 items-center justify-end gap-1 overflow-hidden sm:flex">
                     <RemarkChips chips={cardChips} />
                   </span>
-                  <span
-                    ref={peekRef}
-                    className="relative inline-flex items-center sm:hidden"
-                    onPointerEnter={(e) => { if (e.pointerType === "mouse") setPeekOpen(true) }}
-                    onPointerLeave={(e) => { if (e.pointerType === "mouse") setPeekOpen(false) }}
-                  >
-                    <button
-                      data-note-popover
-                      aria-expanded={peekOpen}
-                      aria-label={`备注：${cardChips.map((c) => c.text).join("、")}`}
-                      onClick={(e) => {
-                        // 点它不该连带开合那一行
-                        e.stopPropagation()
-                        setPeekOpen((open) => !open)
-                      }}
-                      // 只拦「激活键」的冒泡，Esc 必须放它上去
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.stopPropagation() }}
-                      className="inline-flex text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      <Info className="size-3.5" />
-                    </button>
-                    {peekOpen && (
+                  <Popover.Root open={peekOpen} onOpenChange={setPeekOpen}>
+                    <Popover.Anchor asChild>
                       <span
-                        data-note-panel
-                        role="tooltip"
-                        className="absolute top-5 right-0 z-20 flex w-max max-w-[16rem] flex-wrap gap-1 rounded-md border bg-card px-2 py-1.5 shadow-md"
+                        className="relative inline-flex items-center sm:hidden"
+                        onPointerEnter={(e) => { if (e.pointerType === "mouse") setPeekOpen(true) }}
+                        onPointerLeave={(e) => { if (e.pointerType === "mouse") setPeekOpen(false) }}
+                      >
+                        <button
+                          data-note-popover
+                          aria-expanded={peekOpen}
+                          aria-label={`备注：${cardChips.map((c) => c.text).join("、")}`}
+                          onClick={(e) => {
+                            // 点它不该连带开合那一行
+                            e.stopPropagation()
+                            setPeekOpen((open) => !open)
+                          }}
+                          // 只拦「激活键」的冒泡，Esc 必须放它上去
+                          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.stopPropagation() }}
+                          className="inline-flex text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <Info className="size-3.5" />
+                        </button>
+                      </span>
+                    </Popover.Anchor>
+                    <Popover.Portal>
+                      <Popover.Content
+                        side="top"
+                        sideOffset={6}
+                        collisionPadding={8}
+                        onOpenAutoFocus={(event) => event.preventDefault()}
+                        className="z-50 flex w-max max-w-[16rem] flex-wrap gap-1 rounded-md border bg-card px-2 py-1.5 shadow-md"
                       >
                         <RemarkChips chips={cardChips} />
-                      </span>
-                    )}
-                  </span>
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
                 </>
               )}
               {onOpenDetail && (

@@ -214,6 +214,8 @@ export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remark
   // 「详细」档标题行那一格：悬停弹悬浮层，把放不下的备注看全（只有这一档有，另两档收在 ⓘ 里）
   const [titlePeek, setTitlePeek] = useState(false)
   const titlePeekRef = useRef<HTMLSpanElement>(null)
+  // 触摸点备注标题行时用它判断该走点击开合，而不是鼠标 hover
+  const titleTouch = useRef(false)
   // 钉住（点开）之后点别处要能收起；点卡片别的地方会跳详情页，所以只在浮层外按下时收
   useEffect(() => {
     if (!peekOpen) return
@@ -297,8 +299,15 @@ export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remark
           <span
             ref={titlePeekRef}
             className="relative ml-auto flex min-w-0 max-w-[40%] grow basis-0 items-center justify-end sm:max-w-[55%]"
-            onPointerEnter={() => setTitlePeek(true)}
-            onPointerLeave={() => setTitlePeek(false)}
+            onPointerEnter={(e) => { if (e.pointerType === "mouse") setTitlePeek(true) }}
+            onPointerLeave={(e) => { if (e.pointerType === "mouse") setTitlePeek(false) }}
+            onPointerDown={(e) => { titleTouch.current = e.pointerType !== "mouse" }}
+            onClick={(e) => {
+              // 触摸没有 hover：点一下开合；鼠标由 hover 处理，点击不再切换
+              if (!titleTouch.current) return
+              e.stopPropagation()
+              setTitlePeek((value) => !value)
+            }}
           >
             {/* ★`justify-start`（不是 end）：右对齐时溢出往左跑，被裁的会是排最前的
                 私有那枚；左对齐则裁尾巴，前几枚完整 */}

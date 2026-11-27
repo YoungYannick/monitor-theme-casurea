@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { Tooltip } from "radix-ui"
-import { ArrowDown, ArrowUpDown, ArrowUp, ChevronLeft, ChevronRight, Info } from "lucide-react"
+import { Popover, Tooltip } from "radix-ui"
+import { ArrowDown, ArrowUpDown, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, Info } from "lucide-react"
 
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -174,25 +174,60 @@ function statusCell(row: BillingRow) {
   }
 }
 
-/** 年月选择 */
+/** 年月选择：自带面板（iOS Safari 不支持 `input type="month"`），年份可输可翻，月份固定三行 */
 function MonthField({ ym, onChange }: { ym: { y: number; m: number }; onChange: (v: { y: number; m: number }) => void }) {
-  const ref = useRef<HTMLInputElement>(null)
-  const text = `${ym.y}-${String(ym.m + 1).padStart(2, "0")}`
-  useEffect(() => {
-    if (ref.current && ref.current.value !== text) ref.current.value = text
-  }, [text])
+  const [open, setOpen] = useState(false)
+  const [yearText, setYearText] = useState(String(ym.y))
+  const parsed = Number(yearText)
+  const year = Number.isInteger(parsed) && parsed >= 1970 && parsed <= 2100 ? parsed : ym.y
+  const show = (next: boolean) => {
+    setOpen(next)
+    if (next) setYearText(String(ym.y))
+  }
   return (
-    <input
-      ref={ref}
-      type="month"
-      defaultValue={text}
-      onChange={(e) => {
-        const [y, m] = e.target.value.split("-").map(Number)
-        if (Number.isFinite(y) && Number.isFinite(m) && m >= 1 && m <= 12) onChange({ y, m: m - 1 })
-      }}
-      aria-label="选择年月"
-      className="rounded-md border bg-background px-2 py-1 text-sm font-medium text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-    />
+    <Popover.Root open={open} onOpenChange={show}>
+      <Popover.Trigger asChild>
+        <button type="button" aria-label="选择年月" className="tap tap-9 inline-flex h-9 items-center gap-1 rounded-md border bg-background px-2 text-sm font-medium text-foreground">
+          {ym.y} 年 {ym.m + 1} 月
+          <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content sideOffset={4} collisionPadding={8} onOpenAutoFocus={(event) => event.preventDefault()} className="z-50 w-56 rounded-lg border bg-popover p-2 shadow-md">
+          <div className="mb-2 flex items-center justify-between gap-1">
+            <button type="button" className="tap tap-9 grid h-8 w-8 place-items-center rounded-md text-muted-foreground hover:text-foreground" onClick={() => setYearText(String(year - 1))} aria-label="上一年">
+              <ChevronLeft className="size-4" />
+            </button>
+            <label className="flex items-center gap-1 text-sm">
+              <input
+                value={yearText}
+                onChange={(event) => setYearText(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                inputMode="numeric"
+                aria-label="年份"
+                className="tnum w-14 rounded-md border bg-background px-1 py-0.5 text-center text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              />
+              <span className="text-muted-foreground">年</span>
+            </label>
+            <button type="button" className="tap tap-9 grid h-8 w-8 place-items-center rounded-md text-muted-foreground hover:text-foreground" onClick={() => setYearText(String(year + 1))} aria-label="下一年">
+              <ChevronRight className="size-4" />
+            </button>
+          </div>
+          <div className="grid grid-cols-4 gap-1">
+            {Array.from({ length: 12 }, (_, m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => { onChange({ y: year, m }); setOpen(false) }}
+                aria-pressed={ym.y === year && ym.m === m}
+                className={`h-8 rounded-md text-xs transition-colors ${ym.y === year && ym.m === m ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent"}`}
+              >
+                {m + 1} 月
+              </button>
+            ))}
+          </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   )
 }
 
@@ -216,6 +251,26 @@ function BillingCalendar({
   onPick: (day: string | null) => void
 }) {
   const today = new Date()
+  // 当日清单：鼠标悬浮或触摸点击打开；移进面板时给一点缓冲，别在格子与面板之间闪关
+  const [dayOpen, setDayOpen] = useState<string | null>(null)
+  const dayCloseTimer = useRef<number | null>(null)
+  const clearDayClose = () => {
+    if (dayCloseTimer.current !== null) {
+      window.clearTimeout(dayCloseTimer.current)
+      dayCloseTimer.current = null
+    }
+  }
+  const openDay = (key: string) => { clearDayClose(); setDayOpen(key) }
+  const closeDaySoon = (key: string) => {
+    clearDayClose()
+    dayCloseTimer.current = window.setTimeout(() => {
+      dayCloseTimer.current = null
+      setDayOpen((current) => (current === key ? null : current))
+    }, 160)
+  }
+  useEffect(() => () => {
+    if (dayCloseTimer.current !== null) window.clearTimeout(dayCloseTimer.current)
+  }, [])
   // 用户手动翻到的月份（浏览位）；选中日 picked 存在时显示派生月，清除后回到浏览位——
   // 不用 effect 对齐，渲染期直接派生（表格「到期时间」列点击后日历跟着翻页就是这么来的）
   const [browsed, setBrowsed] = useState({ y: today.getFullYear(), m: today.getMonth() })
@@ -290,6 +345,7 @@ function BillingCalendar({
     const [y, m, d] = n.expires_at.slice(0, 10).split("-").map(Number)
     const key = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`
     onPick(picked === key ? null : key)
+    setDayOpen(null)
   }
 
   return (
@@ -299,24 +355,23 @@ function BillingCalendar({
           <div className="mb-2 flex items-center justify-between gap-2">
             <MonthField ym={ym} onChange={browse} />
             <div className="flex items-center gap-1">
-              <button className="tap tap-6 rounded-md text-muted-foreground transition-colors hover:text-foreground" onClick={() => move(-1)} aria-label="上月" title="上月">
+              <button className="tap tap-9 grid h-9 w-9 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground" onClick={() => move(-1)} aria-label="上月" title="上月">
                 <ChevronLeft className="size-4" />
               </button>
               <button
-                className="tap tap-6 rounded-md text-xs text-muted-foreground transition-colors hover:text-foreground"
+                className="tap tap-9 grid h-9 place-items-center rounded-md px-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
                 onClick={() => browse({ y: today.getFullYear(), m: today.getMonth() })}
                 title="回本月"
               >
                 本月
               </button>
-              <button className="tap tap-6 rounded-md text-muted-foreground transition-colors hover:text-foreground" onClick={() => move(1)} aria-label="下月" title="下月">
+              <button className="tap tap-9 grid h-9 w-9 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground" onClick={() => move(1)} aria-label="下月" title="下月">
                 <ChevronRight className="size-4" />
               </button>
             </div>
           </div>
 
           {/* 恒定 42 格（6 行）：月份再短也不跳高度，越界的格子空占位 */}
-          <Tooltip.Provider delayDuration={120}>
             <div className="grid grid-cols-7 gap-1 text-center text-xs text-muted-foreground">
               {["一", "二", "三", "四", "五", "六", "日"].map((w) => <div key={w} className="py-0.5">{w}</div>)}
               {Array.from({ length: 42 }, (_, i) => {
@@ -342,10 +397,22 @@ function BillingCalendar({
                 )
                 if (!due) return <div key={key}>{cell}</div>
                 return (
-                  <Tooltip.Root key={key}>
-                    <Tooltip.Trigger asChild>{cell}</Tooltip.Trigger>
-                    <Tooltip.Portal>
-                      <Tooltip.Content sideOffset={4} collisionPadding={8} className="z-20 max-w-[70vw] rounded-lg border bg-popover px-2 py-1.5 text-[11px] leading-tight shadow-md">
+                  <Popover.Root key={key} open={dayOpen === key} onOpenChange={(open) => setDayOpen(open ? key : null)}>
+                    <Popover.Trigger asChild
+                      onPointerEnter={(event) => { if (event.pointerType === "mouse") openDay(key) }}
+                      onPointerLeave={(event) => { if (event.pointerType === "mouse") closeDaySoon(key) }}
+                    >
+                      {cell}
+                    </Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content
+                        sideOffset={4}
+                        collisionPadding={8}
+                        onOpenAutoFocus={(event) => event.preventDefault()}
+                        onPointerEnter={clearDayClose}
+                        onPointerLeave={() => closeDaySoon(key)}
+                        className="z-20 max-w-[70vw] rounded-lg border bg-popover px-2 py-1.5 text-[11px] leading-tight shadow-md"
+                      >
                         <div className="mb-1 text-muted-foreground">{key.slice(5)} 到期 · {due.length} 台</div>
                         <ul className="space-y-px">
                           {due.map((n) => (
@@ -362,14 +429,12 @@ function BillingCalendar({
                             </li>
                           ))}
                         </ul>
-                        <Tooltip.Arrow className="fill-border" />
-                      </Tooltip.Content>
-                    </Tooltip.Portal>
-                  </Tooltip.Root>
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
                 )
               })}
             </div>
-          </Tooltip.Provider>
         </div>
 
         <div className="min-w-0 flex-1 border-t pt-4 sm:border-l sm:border-t-0 sm:pl-5 sm:pt-0">
@@ -557,7 +622,7 @@ export function Billing({ nodes, exchangeRates = "", excludeTag = "" }: { nodes:
               {shownRows.map((r) => (
                 <tr key={r.node.id} className="hover:bg-muted/50">
                   <td className="max-w-[16rem] px-3 py-2 text-sm font-medium">
-                    <InfoTooltip text={nodeInfo(r.node)}>
+                    <InfoTooltip text={nodeInfo(r.node)} clickable>
                       <span className="block truncate">{r.node.name}</span>
                     </InfoTooltip>
                   </td>
@@ -585,7 +650,7 @@ export function Billing({ nodes, exchangeRates = "", excludeTag = "" }: { nodes:
                   <td className="tnum whitespace-nowrap px-3 py-2 text-right">
                     {excluded.has(r.node.id) ? (
                       // 被排除的机器：金额照算，但挂一枚 Info 标记，悬浮说明不计入合计的原因
-                      <InfoTooltip text={`已排除（公开备注含「${excludeTag}」）：不计入剩余总价值与月均总支出`}>
+                      <InfoTooltip text={`已排除（公开备注含「${excludeTag}」）：不计入剩余总价值与月均总支出`} clickable>
                         <span className="inline-flex items-center justify-end gap-1 text-muted-foreground">
                           {priceText(r, r.remaining, "—")}
                           <Info className="size-3 shrink-0" aria-hidden />

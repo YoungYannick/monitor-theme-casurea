@@ -292,9 +292,13 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   const flashHintRef = useRef<() => void>(() => {})
   const choiceHost = useRef<HTMLDivElement>(null)
   const dialogDrag = useRef<{ id: number; x: number; y: number; startX: number; startY: number } | null>(null)
+  // 触摸抬手后浏览器还会补一次 click，可能落到刚弹出的列表上
+  const choiceOpenedAt = useRef(0)
   const returnFocus = useRef<SVGCircleElement | null>(null)
   const drag = useRef<{
     id: number; x: number; y: number; lon: number; lat: number; moved: boolean
+    /** 按下时的指针类型：触摸抖动比鼠标大，点击阈值要分开 */
+    type: string
     /** pointerdown 那一刻压在谁身上（见 endDrag 的注释：click 的 target 不能再信） */
     pressed: string | null
     target: SVGCircleElement | null
@@ -381,7 +385,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     // pointerup/cancel 仍负责点击与拖拽，地图空白区域仍可正常滚动页面
     if (pressed && e.pointerType === "touch") e.preventDefault()
     drag.current = {
-      id: e.pointerId, x: e.clientX, y: e.clientY, lon: mode === "3d" ? view.lon : flatView.lon, lat: mode === "3d" ? view.lat : flatLat, moved: false,
+      id: e.pointerId, x: e.clientX, y: e.clientY, lon: mode === "3d" ? view.lon : flatView.lon, lat: mode === "3d" ? view.lat : flatLat, moved: false, type: e.pointerType,
       pressed: pressed?.dataset.pinKey ?? null, target: pressed,
     }
     setDragging(true)
@@ -417,8 +421,9 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     if (!d || e.pointerId !== d.id) return
     const dx = e.clientX - d.x
     const dy = e.clientY - d.y
-    // 3px 以内不算拖：手指点一下总要抖一两个像素，当成拖就成了"点不动"
-    if (!d.moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return
+    // 鼠标 3px、触摸 10px：手指点一下的抖动比鼠标大得多，阈值太小会被判成拖拽
+    const tapLimit = d.type === "touch" ? 10 : 3
+    if (!d.moved && Math.abs(dx) < tapLimit && Math.abs(dy) < tapLimit) return
     d.moved = true
     setHoveredKey(null)
     setFocusedKey(null)
@@ -452,14 +457,14 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     const [id, at] = remaining
     drag.current = {
       id, x: at.x, y: at.y, lon: mode === "3d" ? view.lon : flatView.lon, lat: mode === "3d" ? view.lat : flatLat,
-      moved: true, pressed: null, target: null,
+      moved: true, type: "touch", pressed: null, target: null,
     }
     setDragging(true)
   }
 
   /**
-   * 收尾 `open` 为假是手势被浏览器接管（手机上竖着划滚页面走的是 pointercancel）——
-   * 那一下绝不能当成"点了这台机器"
+   * 收尾 `open` 为假是手势被浏览器接管（手机上竖着划滚页面走的是 pointercancel）；
+   * 触摸只要位移没超过点击阈值，仍按轻点处理，否则竖向抖一下就会点不动
    */
   const endDrag = (e: React.PointerEvent<HTMLDivElement>, open: boolean) => {
     const d = drag.current
@@ -472,7 +477,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
       // 同上：没抓着就没什么可放的
     }
     // 先释放 capture，再打开选择窗口，避免把窗口里的下一次操作当成地图拖拽
-    if (open && !d.moved && d.pressed !== null) activatePoint(d.pressed, d.target)
+    if (d.pressed !== null && !d.moved && (open || d.type === "touch")) activatePoint(d.pressed, d.target)
   }
 
   /** 节点选择窗口：标题栏作拖拽手柄，位移限制在视口内 */
@@ -523,6 +528,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
       returnFocus.current = target
       // 每次打开都从居中开始，不会停在上一次拖到的位置
       setDialogOffset({ x: 0, y: 0 })
+      choiceOpenedAt.current = performance.now()
       setChoiceKey(key)
     }
   }
@@ -921,6 +927,8 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
               {choiceMembers.map((node) => (
                 <li key={node.id}>
                   <button type="button" data-map-node-option={node.id} data-online={node.online ? "1" : "0"} onPointerEnter={onWarm} onFocus={onWarm} onClick={() => {
+                    // 刚弹出时的合成 click 不算选择，挡掉触摸抬起误触列表
+                    if (performance.now() - choiceOpenedAt.current < 350) return
                     if (!nodeById.has(node.id) || !choicePoint?.nodeIds.includes(node.id)) return
                     setChoiceKey(null)
                     onWarm()
