@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Popover, Tooltip } from "radix-ui"
 
 const contentClass = "z-50 block max-w-[18rem] rounded-md border bg-popover px-2.5 py-1.5 text-xs leading-relaxed text-popover-foreground shadow-md"
@@ -30,16 +30,32 @@ export function InfoTooltip({ text, children, clickable = false }: { text?: Reac
 
 function ClickInfo({ text, children }: { text: ReactNode; children: ReactNode }) {
   const [open, setOpen] = useState(false)
+  // 触屏点开与鼠标悬浮要分开记：滚动关闭只对触屏生效，桌面悬浮照旧
+  const source = useRef<"mouse" | "touch">("touch")
+  useEffect(() => {
+    if (!open || source.current !== "touch") return
+    const close = () => setOpen(false)
+    document.addEventListener("scroll", close, true)
+    return () => document.removeEventListener("scroll", close, true)
+  }, [open])
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild
-        onPointerEnter={(event) => { if (event.pointerType === "mouse") setOpen(true) }}
+        onPointerDown={(event) => { source.current = event.pointerType === "mouse" ? "mouse" : "touch" }}
+        onPointerEnter={(event) => { if (event.pointerType === "mouse") { source.current = "mouse"; setOpen(true) } }}
         onPointerLeave={(event) => { if (event.pointerType === "mouse") setOpen(false) }}
       >
         {children}
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content side="top" sideOffset={6} collisionPadding={8} onOpenAutoFocus={(event) => event.preventDefault()} className={contentClass}>
+        <Popover.Content
+          side="top"
+          sideOffset={6}
+          collisionPadding={8}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          onPointerDownOutside={() => setOpen(false)}
+          className={contentClass}
+        >
           {text}
         </Popover.Content>
       </Popover.Portal>

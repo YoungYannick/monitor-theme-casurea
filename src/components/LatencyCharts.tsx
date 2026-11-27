@@ -137,14 +137,14 @@ export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, 
   return (
     <div data-latency-charts data-latency-view={view} className="space-y-3">
       <div className="flex flex-wrap items-center gap-1">
-        <button type="button" aria-pressed={view === "rows"} onClick={() => { setView("rows"); setSolo(null) }} className={`tap rounded-md px-2.5 py-1 text-xs ${view === "rows" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>分行</button>
-        <button type="button" aria-pressed={view === "compare"} disabled={legendProbes.length === 0} onClick={() => setView("compare")} className={`tap rounded-md px-2.5 py-1 text-xs disabled:opacity-40 ${view === "compare" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>对比{legendProbes.length > 0 ? ` · ${compared.length}` : ""}</button>
-        {view === "rows" && probes.length > 0 && probes.length <= COMPARE_LIMIT && <button type="button" data-probe-select-all className="tap rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground" onClick={selectAll}>{selected.length === probes.length ? "取消全选" : "全选"}</button>}
+        <button type="button" aria-pressed={view === "rows"} onClick={() => { setView("rows"); setSolo(null) }} className={`tap tap-y-6 rounded-md px-2.5 py-1 text-xs ${view === "rows" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>分行</button>
+        <button type="button" aria-pressed={view === "compare"} disabled={legendProbes.length === 0} onClick={() => setView("compare")} className={`tap tap-y-6 rounded-md px-2.5 py-1 text-xs disabled:opacity-40 ${view === "compare" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>对比{legendProbes.length > 0 ? ` · ${compared.length}` : ""}</button>
+        {view === "rows" && probes.length > 0 && probes.length <= COMPARE_LIMIT && <button type="button" data-probe-select-all className="tap tap-y-6 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground" onClick={selectAll}>{selected.length === probes.length ? "取消全选" : "全选"}</button>}
         <ProbePicker probes={probes} selected={selected} limit={COMPARE_LIMIT} onToggle={toggle} onClear={clearSelection} onAll={selectAll} />
-        {selected.length > 0 && <button type="button" className="tap text-xs text-muted-foreground hover:text-foreground" onClick={clearSelection}>清除选择</button>}
+        {selected.length > 0 && <button type="button" className="tap tap-y-6 text-xs text-muted-foreground hover:text-foreground" onClick={clearSelection}>清除选择</button>}
       </div>
       {view === "rows" ? (
-        <div ref={scroller} data-latency-scroll data-more={more ? "" : undefined} tabIndex={0} role="group" aria-label="延迟线路" onScroll={(e) => { scrollTop.current = e.currentTarget.scrollTop }} className="max-h-[min(36rem,70dvh)] overflow-y-auto overscroll-contain pr-1 focus-visible:outline-2 focus-visible:outline-ring [scrollbar-gutter:stable]">
+        <div ref={scroller} data-latency-scroll data-more={more ? "" : undefined} tabIndex={0} role="group" aria-label="延迟线路" onScroll={(e) => { scrollTop.current = e.currentTarget.scrollTop }} className="max-h-[min(36rem,70dvh)] overflow-y-auto pr-1 focus-visible:outline-2 focus-visible:outline-ring [scrollbar-gutter:stable]">
           <div className="space-y-3">
           {probes.map((probe) => {
             const last = latest.get(probe.id)
@@ -154,7 +154,9 @@ export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, 
               <div key={probe.id} data-latency-row={probe.id} className={`rounded-lg border p-3 ${chosen ? "border-ring bg-muted/20" : ""}`}>
                 <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                   <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <input type="checkbox" data-probe-select={probe.id} aria-label={`对比：${probe.name}`} checked={chosen} disabled={!chosen && selected.length >= COMPARE_LIMIT} title={!chosen && selected.length >= COMPARE_LIMIT ? "最多对比六条线路" : probe.name} onChange={() => toggle(probe.id)} className="shrink-0 accent-foreground" />
+                    <label className="tap tap-y-15 shrink-0 cursor-pointer">
+                    <input type="checkbox" data-probe-select={probe.id} aria-label={`对比：${probe.name}`} checked={chosen} disabled={!chosen && selected.length >= COMPARE_LIMIT} title={!chosen && selected.length >= COMPARE_LIMIT ? "最多对比六条线路" : probe.name} onChange={() => toggle(probe.id)} className="accent-foreground" />
+                  </label>
                     <ProbeLegendButton row id={probe.id} name={probe.name} stroke="var(--chart-1)" loss={probe.loss} shown highlighted={false} onToggle={() => toggle(probe.id)} onSolo={() => lookAt(probe.id)} onHighlight={() => undefined} />
                   </div>
                   <div className="tnum flex w-full shrink-0 items-center gap-3 pl-6 text-xs text-muted-foreground sm:w-auto sm:pl-0">

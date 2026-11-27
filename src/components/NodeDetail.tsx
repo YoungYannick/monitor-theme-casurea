@@ -121,6 +121,14 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
   // 名称行那枚状态徽章（在线/离线 + 时长）；从未接入时为 null
   const status = onlineStatus(node)
   const [peekOpen, setPeekOpen] = useState(false)
+  // 触屏点开与鼠标悬浮分开记：滚动关闭只对触屏生效
+  const peekSource = useRef<"mouse" | "touch">("touch")
+  useEffect(() => {
+    if (!peekOpen || peekSource.current !== "touch") return
+    const close = () => setPeekOpen(false)
+    document.addEventListener("scroll", close, true)
+    return () => document.removeEventListener("scroll", close, true)
+  }, [peekOpen])
   // 就地展开只为看延迟，页签默认落在延迟而不是资源
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>(embedded ? "latency" : "resources")
   // 资源页签多一档「实时」（默认）：快照走前端自攒缓冲，历史档才走 /metrics 请求
@@ -602,7 +610,8 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
                     <Popover.Anchor asChild>
                       <span
                         className="relative inline-flex items-center sm:hidden"
-                        onPointerEnter={(e) => { if (e.pointerType === "mouse") setPeekOpen(true) }}
+                        onPointerDown={(e) => { peekSource.current = e.pointerType === "mouse" ? "mouse" : "touch" }}
+                        onPointerEnter={(e) => { if (e.pointerType === "mouse") { peekSource.current = "mouse"; setPeekOpen(true) } }}
                         onPointerLeave={(e) => { if (e.pointerType === "mouse") setPeekOpen(false) }}
                       >
                         <button
@@ -616,7 +625,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
                           }}
                           // 只拦「激活键」的冒泡，Esc 必须放它上去
                           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.stopPropagation() }}
-                          className="inline-flex text-muted-foreground transition-colors hover:text-foreground"
+                          className="tap tap-y-15 inline-flex text-muted-foreground transition-colors hover:text-foreground"
                         >
                           <Info className="size-3.5" />
                         </button>

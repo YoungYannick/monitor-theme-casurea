@@ -643,15 +643,21 @@ input[type="checkbox"]:focus-visible {
      tap-9   36×36 → 44×44（顶栏那几枚图标、搜索方框）
      tap-8   32 高  → 44    （站名）
      tap-10  40 高  → 44
+     tap-5   20×20 → 44×44（卡片右上 Info）
      tap-y-6 24 高  → 44 高，横向不动 —— 密排的分段按钮之间别互相盖住
+     tap-y-12 20 高 → 44 高，横向不动
+     tap-y-15 14 高 → 44 高，横向不动
    地区列表（.globe-reg）行距只有 8px，上下各撑 4px 到 28px 就不重叠了，再大就得动视觉 */
 .tap { position: relative; }
 .tap::before { content: ""; position: absolute; border-radius: inherit; }
 .tap-9::before { inset: -4px; }
 .tap-8::before { inset: -6px; }
 .tap-10::before { inset: -2px; }
+.tap-5::before { inset: -12px; }
 .tap-y-9::before { inset: -4px 0; }
 .tap-y-6::before { inset: -10px 0; }
+.tap-y-12::before { inset: -12px 0; }
+.tap-y-15::before { inset: -15px 0; }
 .globe-reg { position: relative; }
 .globe-reg::before { content: ""; position: absolute; inset: -4px 0; border-radius: 4px; }
 
@@ -664,3 +670,12 @@ input[type="checkbox"]:focus-visible {
 .detail-scroll::-webkit-scrollbar { width: 5px; }
 .detail-scroll::-webkit-scrollbar-thumb { border-radius: 6px; background: var(--muted-foreground); }
 .detail-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* 触屏没有 hover：按下给一点反馈，避免"点了没反应"的错觉；桌面保持原样 */
+@media (hover: none) {
+  button:not(:disabled):active,
+  [role="button"]:active,
+  a:active { opacity: 0.72; }
+  .globe-reg:active,
+  [data-node-card]:active { background: color-mix(in srgb, var(--foreground) 5%, transparent); }
+}

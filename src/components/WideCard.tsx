@@ -1,5 +1,7 @@
+import { Tooltip } from "radix-ui"
 import { Card } from "@/components/ui/card"
 import { Country, OfflineMark, RemarkChips, deployed, monthUsage } from "@/components/NodeCard"
+import { InfoTooltip } from "@/components/InfoTooltip"
 import { TextHighlight } from "@/components/TextHighlight"
 import type { Node } from "@/lib/api"
 import { cycleLabel, FOREVER, bytes, daysUntil, money, osName, pair, percent, rate, uptime } from "@/lib/format"
@@ -50,17 +52,20 @@ function trafficFoot(node: Node) {
 /** 底注那一行最多摊几枚备注小卡片（一行放不下，把价格/到期挤走就见不到了） */
 const CHIPS = 3
 
-/** 一个读数格：表名在上、读数在中、3px 条压底 `pct` 为 null 时轨道留空（「不知道」≠「用得很少」） */
+/** 一个读数格：表名在上、读数在中、3px 条压底 `pct` 为 null 时轨道留空（「不知道」≠「用得很少」）
+ *  绝对值、负载三档这些只在悬浮层里看：宽卡本来就是紧凑读数，摊在格子里会把卡挤爆 */
 function Readout({ label, value, pct, title }: { label: string; value: string; pct: number | null; title?: string }) {
   const filled = pct === null || !Number.isFinite(pct) ? 0 : Math.min(100, Math.max(0, pct))
   return (
-    <div className="min-w-0" title={title}>
-      <div className="truncate text-xs text-muted-foreground">{label}</div>
-      <div className="tnum mt-0.5 truncate text-[13px] font-semibold leading-[18px]">{value}</div>
-      <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full bg-foreground/70 transition-[width] duration-500" style={{ width: `${filled}%` }} />
+    <InfoTooltip text={title}>
+      <div className="min-w-0">
+        <div className="truncate text-xs text-muted-foreground">{label}</div>
+        <div className="tnum mt-0.5 truncate text-[13px] font-semibold leading-[18px]">{value}</div>
+        <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-muted">
+          <div className="h-full rounded-full bg-foreground/70 transition-[width] duration-500" style={{ width: `${filled}%` }} />
+        </div>
       </div>
-    </div>
+    </InfoTooltip>
   )
 }
 
@@ -79,7 +84,8 @@ export function WideCard({ node, onOpen, onWarm, terms, remarkPlacement, selecte
   // 已部署但掉线：挂离线标记（未接入的不算，见 OfflineMark）
   const offline = !node.online && deployed(node)
   return (
-    <Card
+    <Tooltip.Provider delayDuration={200}>
+      <Card
       onClick={onOpen}
       onPointerOver={onWarm}
       onFocus={onWarm}
@@ -103,7 +109,7 @@ export function WideCard({ node, onOpen, onWarm, terms, remarkPlacement, selecte
       {deployed(node) ? (
         <>
           {/* ③ 四个读数格（CPU / 内存 / 存储 / 负载） */}
-          <div data-metrics="" className="mt-1.5 grid grid-cols-4 gap-x-3 border-t pt-1.5">
+          <div data-metrics="" className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-2 border-t pt-1.5 sm:grid-cols-4 sm:gap-y-0">
             <Readout
               label="CPU"
               title={`${node.cpu_cores} 核`}
@@ -149,7 +155,7 @@ export function WideCard({ node, onOpen, onWarm, terms, remarkPlacement, selecte
           </div>
 
           {/* ⑤ 总流量：已用 / 额度 + 重置日 + 全宽进度条 */}
-          <div className="tnum mt-1.5 flex items-baseline justify-between gap-2 text-[11px] text-muted-foreground">
+          <div className="tnum mt-1.5 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
             <span className="min-w-0 truncate">{trafficFoot(node)}</span>
             <span className="shrink-0">
               流量重置：{node.traffic_limit > 0 ? `每月 ${node.traffic_reset_day} 日` : "N/A"}
@@ -162,12 +168,20 @@ export function WideCard({ node, onOpen, onWarm, terms, remarkPlacement, selecte
             />
           </div>
 
-          {/* ⑥ 底注：价格 / 到期在左、备注在右，这一行恒定占位（16px） */}
+          {/* ⑥ 底注：价格 / 到期必须完整，备注让位（放不下时悬浮或点开看全文） */}
           <div className="mt-1.5 flex h-4 min-w-0 items-center justify-between gap-2">
-            <span className="tnum min-w-0 truncate text-[11px] leading-4 text-muted-foreground">{noteText(node)}</span>
-            <span data-remark="card" className="flex min-w-0 shrink items-center justify-end gap-1">
-              <RemarkChips chips={chips} compact />
-            </span>
+            <span className="tnum shrink-0 whitespace-nowrap text-[11px] leading-4 text-muted-foreground">{noteText(node)}</span>
+            {chips.length > 0 && (
+              <InfoTooltip clickable text={<span className="flex flex-col gap-0.5">{chips.map((c, i) => <span key={i}>{c.own ? `仅自己可见：${c.text}` : c.text}</span>)}</span>}>
+                <span
+                  data-remark="card"
+                  className="flex min-w-0 items-center justify-start gap-1 overflow-hidden"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <RemarkChips chips={chips} max="9rem" keep compact />
+                </span>
+              </InfoTooltip>
+            )}
           </div>
         </>
       ) : (
@@ -176,6 +190,7 @@ export function WideCard({ node, onOpen, onWarm, terms, remarkPlacement, selecte
         </p>
       )}
       {offline && <OfflineMark />}
-    </Card>
+      </Card>
+    </Tooltip.Provider>
   )
 }

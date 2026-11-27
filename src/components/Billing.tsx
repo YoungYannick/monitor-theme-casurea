@@ -253,6 +253,8 @@ function BillingCalendar({
   const today = new Date()
   // 当日清单：鼠标悬浮或触摸点击打开；移进面板时给一点缓冲，别在格子与面板之间闪关
   const [dayOpen, setDayOpen] = useState<string | null>(null)
+  // 触屏点开与鼠标悬浮分开记：滚动关闭只对触屏生效
+  const daySource = useRef<"mouse" | "touch">("touch")
   const dayCloseTimer = useRef<number | null>(null)
   const clearDayClose = () => {
     if (dayCloseTimer.current !== null) {
@@ -260,7 +262,7 @@ function BillingCalendar({
       dayCloseTimer.current = null
     }
   }
-  const openDay = (key: string) => { clearDayClose(); setDayOpen(key) }
+  const openDay = (key: string) => { clearDayClose(); daySource.current = "mouse"; setDayOpen(key) }
   const closeDaySoon = (key: string) => {
     clearDayClose()
     dayCloseTimer.current = window.setTimeout(() => {
@@ -271,6 +273,13 @@ function BillingCalendar({
   useEffect(() => () => {
     if (dayCloseTimer.current !== null) window.clearTimeout(dayCloseTimer.current)
   }, [])
+  // 触屏点开的当日清单：页面一滚就收，别让它跟着格子走
+  useEffect(() => {
+    if (!dayOpen || daySource.current !== "touch") return
+    const close = () => setDayOpen(null)
+    document.addEventListener("scroll", close, true)
+    return () => document.removeEventListener("scroll", close, true)
+  }, [dayOpen])
   // 用户手动翻到的月份（浏览位）；选中日 picked 存在时显示派生月，清除后回到浏览位——
   // 不用 effect 对齐，渲染期直接派生（表格「到期时间」列点击后日历跟着翻页就是这么来的）
   const [browsed, setBrowsed] = useState({ y: today.getFullYear(), m: today.getMonth() })
@@ -351,7 +360,7 @@ function BillingCalendar({
   return (
     <Card className="gap-4 p-4">
       <div className="flex flex-col gap-5 sm:flex-row">
-        <div className="mx-auto w-full max-w-[19rem] shrink-0 sm:mx-0">
+        <div className="mx-auto w-full max-w-[21rem] shrink-0 sm:mx-0">
           <div className="mb-2 flex items-center justify-between gap-2">
             <MonthField ym={ym} onChange={browse} />
             <div className="flex items-center gap-1">
@@ -399,6 +408,7 @@ function BillingCalendar({
                 return (
                   <Popover.Root key={key} open={dayOpen === key} onOpenChange={(open) => setDayOpen(open ? key : null)}>
                     <Popover.Trigger asChild
+                      onPointerDown={(event) => { daySource.current = event.pointerType === "mouse" ? "mouse" : "touch" }}
                       onPointerEnter={(event) => { if (event.pointerType === "mouse") openDay(key) }}
                       onPointerLeave={(event) => { if (event.pointerType === "mouse") closeDaySoon(key) }}
                     >
@@ -409,6 +419,7 @@ function BillingCalendar({
                         sideOffset={4}
                         collisionPadding={8}
                         onOpenAutoFocus={(event) => event.preventDefault()}
+                        onPointerDownOutside={() => setDayOpen(null)}
                         onPointerEnter={clearDayClose}
                         onPointerLeave={() => closeDaySoon(key)}
                         className="z-20 max-w-[70vw] rounded-lg border bg-popover px-2 py-1.5 text-[11px] leading-tight shadow-md"

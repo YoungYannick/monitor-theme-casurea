@@ -136,6 +136,8 @@ export function TimeChart({
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null)
   // 按下即记录起点：拖动就扩选区，抬手时不足两个桶就不缩放
   const press = useRef<{ id: number; x: number; y: number; at: number; last: number; moved: boolean } | null>(null)
+  // 触摸点出的数值浮层：滚动或点图表外要自动收掉（鼠标悬浮由 onMouseLeave 管）
+  const touchHover = useRef(false)
 
   // 横向拖动才拦页面滚动；纵向仍让页面滚。否则浏览器会把拖动判成 pan 并发出 pointercancel，选框中途丢失
   useEffect(() => {
@@ -151,7 +153,27 @@ export function TimeChart({
     return () => el.removeEventListener("touchmove", onTouchMove)
   }, [])
 
+  // 触摸点出的数值浮层：页面一滚或点到图表外就收；鼠标悬浮不受影响
+  useEffect(() => {
+    if (hover === null || !touchHover.current) return
+    const dismiss = (event: Event) => {
+      if (event.type === "pointerdown") {
+        const target = (event as PointerEvent).target
+        if (target instanceof globalThis.Node && box.current?.contains(target)) return
+      }
+      setHover(null)
+      setPointerY(null)
+    }
+    document.addEventListener("scroll", dismiss, true)
+    document.addEventListener("pointerdown", dismiss, true)
+    return () => {
+      document.removeEventListener("scroll", dismiss, true)
+      document.removeEventListener("pointerdown", dismiss, true)
+    }
+  }, [hover])
+
   // 卡片高度：用来把它夹在绘图区里（别顶出去）悬停的那一格变了才量一次
+  const tipMounted = drag === null
   useLayoutEffect(() => {
     const el = tip.current
     if (!el) return
@@ -163,7 +185,8 @@ export function TimeChart({
     observer.observe(el)
     read()
     return () => observer.disconnect()
-  }, [hover])
+    // 选区消失（drag → null）时 tip 才真正挂载，必须在那次重新量尺寸
+  }, [hover, tipMounted])
 
   useLayoutEffect(() => {
     const el = box.current
@@ -347,7 +370,12 @@ export function TimeChart({
   const tipPlaced = tipSize.w > 0 && tipSize.h > 0
 
   return (
-    <div ref={box} data-chart="" data-plot-left={plotLeft} data-connect-gaps={connectGaps} data-smooth-lines={smoothLines} className="relative h-full w-full select-none overflow-x-clip" onMouseLeave={() => { setHover(null); setPointerY(null) }}>
+    <div ref={box} data-chart="" data-plot-left={plotLeft} data-connect-gaps={connectGaps} data-smooth-lines={smoothLines} className="relative h-full w-full select-none overflow-x-clip" onMouseLeave={() => {
+        // 触摸点出的浮层由滚动/外部点击关闭；tap 后浏览器补发的 mouseleave 不能把它清掉
+        if (touchHover.current) return
+        setHover(null)
+        setPointerY(null)
+      }}>
       {w > 0 && h > 0 && (
         <svg width={w} height={h} role="img" aria-label={label} className="overflow-visible">
           <defs>
@@ -454,6 +482,7 @@ export function TimeChart({
             }}
             onPointerDown={(e) => {
               if (view.length === 0) return
+              if (e.pointerType !== "mouse") touchHover.current = true
               // 捕获失败不该让整段拖选失效（指针已经消失、或合成事件没有有效 id 时会抛）
               try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* 无所谓 */ }
               const at = view[indexAt(e.clientX, e.currentTarget)].ts
@@ -465,6 +494,8 @@ export function TimeChart({
             }}
             onPointerMove={(e) => {
               if (view.length === 0) return
+              // 真鼠标移动才回到桌面语义；触摸后的合成 mousemove 不能把来源清掉
+              if (e.pointerType === "mouse") touchHover.current = false
               const at = view[indexAt(e.clientX, e.currentTarget)].ts
               const p = press.current
               if (e.pointerType !== "mouse" && !drag) setHover(at)
@@ -472,12 +503,12 @@ export function TimeChart({
               p.last = at
               setDrag({ from: p.at, to: at })
             }}
-            onPointerUp={() => {
+            onPointerUp={(e) => {
               const p = press.current
               press.current = null
               if (!p) return
-              // 没拖开就是"看数值"，保留浮层，不缩放
-              if (!p.moved) {
+              // 几乎没位移就是"看数值"：保留浮层、不缩放；横向拖开才当选区
+              if (!p.moved || Math.abs(e.clientX - p.x) < 6) {
                 setDrag(null)
                 return
               }

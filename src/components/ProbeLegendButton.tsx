@@ -88,7 +88,7 @@ export function ProbeLegendButton({ id, name, stroke, width, loss, shown, highli
       onPointerLeave={() => { clearPress(); onHighlight("hover", false) }}
       onFocus={() => onHighlight("focus", true)}
       onBlur={() => onHighlight("focus", false)}
-      className={`tap inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring select-none ${row ? "text-left text-sm font-medium" : "border px-2 py-1 text-xs"} ${
+      className={`tap tap-y-12 inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring select-none ${row ? "text-left text-sm font-medium" : "border px-2 py-1 text-xs"} ${
         !row && highlighted ? "border-ring bg-muted" : ""
       } ${row || shown ? "" : "opacity-40"}`}
       style={{ WebkitTouchCallout: "none" }}

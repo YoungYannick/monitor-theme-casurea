@@ -20,7 +20,7 @@ export function ProbePicker({ probes, selected, limit, onToggle, onClear, onAll 
   return (
     <Popover.Root open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery("") }}>
       <Popover.Trigger asChild>
-        <button type="button" data-probe-picker className="tap ml-auto inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
+        <button type="button" data-probe-picker className="tap tap-y-6 ml-auto inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
           选择线路<span className="tnum">{selected.length}/{limit}</span><ChevronDown className="size-3" aria-hidden />
         </button>
       </Popover.Trigger>
@@ -32,13 +32,13 @@ export function ProbePicker({ probes, selected, limit, onToggle, onClear, onAll 
           </div>
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <span className="tnum">已选 {selected.length}/{limit}</span>
-            {probes.length > 0 && probes.length <= limit && <button type="button" data-probe-picker-all className="tap ml-auto hover:text-foreground" onClick={onAll}>{selected.length === probes.length ? "取消全选" : "全选"}</button>}
-            {selected.length > 0 && <button type="button" className="tap ml-auto hover:text-foreground" onClick={onClear}>清除选择</button>}
+            {probes.length > 0 && probes.length <= limit && <button type="button" data-probe-picker-all className="tap tap-y-6 ml-auto hover:text-foreground" onClick={onAll}>{selected.length === probes.length ? "取消全选" : "全选"}</button>}
+            {selected.length > 0 && <button type="button" className="tap tap-y-6 ml-auto hover:text-foreground" onClick={onClear}>清除选择</button>}
           </div>
           {chosen.length > 0 && <div className="flex flex-wrap gap-1">
-            {chosen.map((probe) => <button key={probe.id} type="button" data-probe-picked={probe.id} aria-label={`移除：${probe.name}`} title={probe.name} onClick={() => onToggle(probe.id)} className="tap inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[11px]"><span className="truncate">{probe.name}</span><X className="size-3 shrink-0 text-muted-foreground" aria-hidden /></button>)}
+            {chosen.map((probe) => <button key={probe.id} type="button" data-probe-picked={probe.id} aria-label={`移除：${probe.name}`} title={probe.name} onClick={() => onToggle(probe.id)} className="tap tap-y-12 inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[11px]"><span className="truncate">{probe.name}</span><X className="size-3 shrink-0 text-muted-foreground" aria-hidden /></button>)}
           </div>}
-          <div data-probe-options className="max-h-[min(16rem,45dvh)] min-h-0 overflow-y-auto overscroll-contain">
+          <div data-probe-options className="max-h-[min(16rem,45dvh)] min-h-0 overflow-y-auto">
             {matches.length > 0 ? matches.map((probe) => {
               const checked = selected.includes(probe.id)
               const disabled = !checked && selected.length >= limit

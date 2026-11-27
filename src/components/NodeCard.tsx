@@ -171,7 +171,7 @@ export function RemarkChips({ chips, max = "full", keep = false, compact = false
           title={c.own ? "仅自己可见：" + c.text : c.text}
         >
           {c.own && <Lock className="size-3 shrink-0" aria-hidden />}
-          <span className="min-w-0 truncate">{c.text}</span>
+          <span className="min-w-0">{c.text}</span>
         </Badge>
       ))}
     </>
@@ -216,6 +216,13 @@ export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remark
   const titlePeekRef = useRef<HTMLSpanElement>(null)
   // 触摸点备注标题行时用它判断该走点击开合，而不是鼠标 hover
   const titleTouch = useRef(false)
+  // 触屏点开的备注浮层：页面一滚就收；鼠标悬浮不受影响
+  useEffect(() => {
+    if (!titlePeek || !titleTouch.current) return
+    const close = () => setTitlePeek(false)
+    document.addEventListener("scroll", close, true)
+    return () => document.removeEventListener("scroll", close, true)
+  }, [titlePeek])
   // 钉住（点开）之后点别处要能收起；点卡片别的地方会跳详情页，所以只在浮层外按下时收
   useEffect(() => {
     if (!peekOpen) return
@@ -299,7 +306,7 @@ export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remark
           <span
             ref={titlePeekRef}
             className="relative ml-auto flex min-w-0 max-w-[40%] grow basis-0 items-center justify-end sm:max-w-[55%]"
-            onPointerEnter={(e) => { if (e.pointerType === "mouse") setTitlePeek(true) }}
+            onPointerEnter={(e) => { if (e.pointerType === "mouse") { titleTouch.current = false; setTitlePeek(true) } }}
             onPointerLeave={(e) => { if (e.pointerType === "mouse") setTitlePeek(false) }}
             onPointerDown={(e) => { titleTouch.current = e.pointerType !== "mouse" }}
             onClick={(e) => {
@@ -342,7 +349,7 @@ export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remark
               aria-label="备注、在线时间、价格、到期与三网延迟"
               onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape") setPeekOpen(false) }}
               onClick={(e) => { e.stopPropagation(); setPeekOpen((v) => !v) }}
-              className="grid size-5 place-items-center rounded-full text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              className="tap tap-5 grid size-5 place-items-center rounded-full text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             >
               <Info className="size-3.5" />
             </button>

@@ -86,7 +86,7 @@ function expiryShort(node: Node): { text: string; soon: boolean; muted: boolean 
 // 都从这一份推，三处不会各写各的；列宽另放 W，只写宽度、不碰显隐
 const MIN = {
   name: 0, os: 1280, uptime: 768, expiry: 1024, price: 1024, load: 768,
-  net: 640, cpu: 0, mem: 640, disk: 768, traffic: 0,
+  net: 640, cpu: 0, mem: 0, disk: 768, traffic: 640,
 } as const
 const W = {
   // 名称列只在宽屏封顶：内容宽度（后台可调，默认 85%）从视口 ~1772px 起接管（表宽开始超过 1280），
