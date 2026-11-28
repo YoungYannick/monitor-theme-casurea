@@ -582,7 +582,7 @@ function StreamNotice() {
   return (
     <Toast.Provider label="连接状态" duration={Infinity}>
       <Toast.Root open={open} onOpenChange={setOpen} type="background"
-        className="flex items-center gap-3 rounded-lg border bg-popover py-2 pr-2 pl-3 text-popover-foreground shadow-md data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] motion-safe:transition-opacity motion-safe:duration-150 motion-safe:starting:opacity-0">
+        className="flex items-center gap-3 rounded-lg corner-squircle border bg-popover py-2 pr-2 pl-3 text-popover-foreground shadow-md data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] motion-safe:transition-opacity motion-safe:duration-150 motion-safe:starting:opacity-0">
         <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
           <WifiOff className="size-4" aria-hidden="true" />
         </span>
@@ -607,7 +607,7 @@ function SiteIcon() {
   const [broken, setBroken] = useState(false)
   if (broken) return null
   return (
-    <span className="size-8 shrink-0 overflow-hidden rounded-full [corner-shape:round]">
+    <span className="size-8 shrink-0 overflow-hidden rounded-full">
       <img
         src={src}
         alt=""

@@ -13,7 +13,7 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
       className={cn(
         // 卡片这个「壳」照参考站那套：`rounded-lg border bg-card`，**不带阴影**——
         // 它靠「浅灰页面 + 白卡 + 一道描边」把卡片托出来，加阴影反而糊成一团
-        "flex flex-col gap-6 rounded-lg border bg-card py-6 text-card-foreground",
+        "flex flex-col gap-6 rounded-lg corner-squircle border bg-card py-6 text-card-foreground",
         className
       )}
       {...props}

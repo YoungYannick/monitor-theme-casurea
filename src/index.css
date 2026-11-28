@@ -12,6 +12,11 @@
 @custom-variant dark (&:is(.dark *));
 @custom-variant dark-neutral (&:is(.dark-neutral *));
 
+/* 大容器在自身显式启用连续曲率，圆角半径仍由各组件决定 */
+@utility corner-squircle {
+  corner-shape: squircle;
+}
+
 :root {
   --radius: 0.625rem;
   /* 页面底色浅灰、卡片纯白：两面有亮度差，卡片靠底色就「浮」得出来 */
@@ -174,8 +179,6 @@
 
 @layer base {
   * { @apply border-border outline-ring/50; }
-  /* 连续曲率圆角；浏览器不支持时按未知属性忽略 */
-  *, *::before, *::after { corner-shape: squircle; }
   /* Reserve the scrollbar's width on every page: without it, leaving a route
      whose content exceeds the fold widens the page. */
   html { scrollbar-gutter: stable; }
@@ -207,7 +210,6 @@
 }
 ::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  corner-shape: squircle;
   background: var(--scrollbar-thumb);
 }
 ::-webkit-scrollbar-thumb:hover {

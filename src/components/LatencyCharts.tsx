@@ -106,11 +106,11 @@ export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, 
   const lookAt = (id: number) => onStateChange((previous) => ({ ...previous, solo: id, view: "compare", hidden: previous.hidden.filter((one) => one !== id) }))
   const toggleShown = (id: number) => onStateChange((previous) => {
     const hidden = new Set(previous.hidden)
-    // 未选中的线路可临时独看，隐藏后仍保留它自己的图例。
+    // 未选中的线路可临时独看，隐藏后仍保留它自己的图例
     const previewOnly = previous.solo === id && !previous.ids.includes(id)
     const shown = (previous.solo === null || previous.solo === id) && !hidden.has(id)
     if (previous.solo !== null && !previewOnly) {
-      // 退出独看时，其余线路保持隐藏，由图例逐条恢复。
+      // 退出独看时，其余线路保持隐藏，由图例逐条恢复
       for (const one of previous.ids) if (one !== previous.solo) hidden.add(one)
     }
     if (shown) hidden.add(id)
@@ -151,7 +151,7 @@ export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, 
             const value = last?.latency
             const chosen = selected.includes(probe.id)
             return (
-              <div key={probe.id} data-latency-row={probe.id} className={`rounded-lg border p-3 ${chosen ? "border-ring bg-muted/20" : ""}`}>
+              <div key={probe.id} data-latency-row={probe.id} className={`rounded-lg corner-squircle border p-3 ${chosen ? "border-ring bg-muted/20" : ""}`}>
                 <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                   <div className="flex min-w-0 flex-1 items-center gap-2">
                     <label className="tap tap-y-15 shrink-0 cursor-pointer">

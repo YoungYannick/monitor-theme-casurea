@@ -35,9 +35,8 @@ export function deployed(node: Node) {
  */
 export function OfflineMark() {
   return (
-    <span data-offline-mark="" aria-hidden className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-lg">
-      <span className="absolute inset-0 rounded-lg bg-card/60" />
-      <span className="relative text-sm font-semibold text-red-500">离线</span>
+    <span data-offline-mark="" aria-hidden className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-lg corner-squircle bg-card/60 text-sm font-semibold text-red-500">
+      离线
     </span>
   )
 }

@@ -778,7 +778,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
 
   return (
     <Tooltip.Provider delayDuration={0}>
-    <section className="globe-panel" aria-label="节点地图" data-map-mode={mode} data-map-spin={rotating ? "true" : "false"} data-map-spinning={spinning ? "true" : "false"} data-marker-pulse={inView && pageVisible && !reduced ? "true" : "false"} data-map-flow-playing={flowPoint ? flowPlaying : undefined} data-map-flow-origin={flowPoint ? flowTarget?.kind : undefined} data-map-flow-longitude={flowPoint?.ll[0]} data-map-flow-latitude={flowPoint?.ll[1]}>
+    <section className="globe-panel corner-squircle" aria-label="节点地图" data-map-mode={mode} data-map-spin={rotating ? "true" : "false"} data-map-spinning={spinning ? "true" : "false"} data-marker-pulse={inView && pageVisible && !reduced ? "true" : "false"} data-map-flow-playing={flowPoint ? flowPlaying : undefined} data-map-flow-origin={flowPoint ? flowTarget?.kind : undefined} data-map-flow-longitude={flowPoint?.ll[0]} data-map-flow-latitude={flowPoint?.ll[1]}>
       <div className="globe-main" style={{ "--globe-shared-height": `${sharedHeight}px`, "--globe-mobile-height": `${mobileHeight}px` } as CSSProperties}>
         <div
           ref={host}
@@ -904,7 +904,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
           <Dialog.Content
             ref={choiceHost}
             id={choiceId}
-            className="globe-node-dialog"
+            className="globe-node-dialog corner-squircle"
             data-map-node-dialog
             data-dragging={dialogDragging ? "true" : "false"}
             style={{ "--dialog-x": `${dialogOffset.x}px`, "--dialog-y": `${dialogOffset.y}px` } as CSSProperties}

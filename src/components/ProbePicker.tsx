@@ -25,7 +25,7 @@ export function ProbePicker({ probes, selected, limit, onToggle, onClear, onAll 
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content data-probe-picker-panel align="end" sideOffset={6} collisionPadding={12} aria-label="选择对比线路" onOpenAutoFocus={(event) => { event.preventDefault(); input.current?.focus() }} className="z-50 flex max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] flex-col gap-2 rounded-lg border bg-popover p-2 text-popover-foreground shadow-md">
+        <Popover.Content data-probe-picker-panel align="end" sideOffset={6} collisionPadding={12} aria-label="选择对比线路" onOpenAutoFocus={(event) => { event.preventDefault(); input.current?.focus() }} className="z-50 flex max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] flex-col gap-2 rounded-lg corner-squircle border bg-popover p-2 text-popover-foreground shadow-md">
           <div className="flex items-center gap-2 rounded-md border px-2 py-1.5">
             <Search className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
             <input ref={input} type="search" data-probe-search aria-label="搜索线路" placeholder="搜索线路" value={query} onChange={(event) => setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-xs outline-none" />

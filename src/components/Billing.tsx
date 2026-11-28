@@ -193,7 +193,7 @@ function MonthField({ ym, onChange }: { ym: { y: number; m: number }; onChange: 
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content sideOffset={4} collisionPadding={8} onOpenAutoFocus={(event) => event.preventDefault()} className="z-50 w-56 rounded-lg border bg-popover p-2 shadow-md">
+        <Popover.Content sideOffset={4} collisionPadding={8} onOpenAutoFocus={(event) => event.preventDefault()} className="z-50 w-56 rounded-lg corner-squircle border bg-popover p-2 shadow-md">
           <div className="mb-2 flex items-center justify-between gap-1">
             <button type="button" className="tap tap-9 grid h-8 w-8 place-items-center rounded-md text-muted-foreground hover:text-foreground" onClick={() => setYearText(String(year - 1))} aria-label="上一年">
               <ChevronLeft className="size-4" />
@@ -476,7 +476,7 @@ function BillingCalendar({
                         <li key={n.id} className="min-w-0 flex-[1_1_14rem] max-w-[28rem]">
                           <button
                             onClick={() => focusNode(n)}
-                            className="w-full cursor-pointer rounded-lg border bg-background/40 p-2.5 text-left transition-colors hover:bg-muted/50"
+                            className="w-full cursor-pointer rounded-lg corner-squircle border bg-background/40 p-2.5 text-left transition-colors hover:bg-muted/50"
                           >
                             <div className="flex items-center gap-2">
                               <span className="min-w-0 flex-1 truncate text-sm font-medium">{n.name}</span>
