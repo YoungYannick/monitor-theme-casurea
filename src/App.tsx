@@ -1,5 +1,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
-import { Globe as GlobeIcon, Moon, Sun, Wallet, Wrench } from "lucide-react"
+import { Globe as GlobeIcon, Moon, Sun, Wallet, WifiOff, Wrench, X } from "lucide-react"
+import { Toast } from "radix-ui"
 
 import { Billing } from "@/components/Billing"
 import { CardStyleMenu } from "@/components/CardStyleMenu"
@@ -519,7 +520,6 @@ export default function App() {
       {/* ★ 内容宽度：1280 保底、宽屏放开到后台「内容宽度」设置（默认 85%，60–100 可调） —— header 与 footer 同此一条 */}
       <main className="mx-auto w-full flex-1 space-y-5 px-4 py-4 sm:px-6" style={{ maxWidth: contentMax }}>
         {error && <p className="text-sm text-destructive">{error}</p>}
-        {stalled && <p role="status" className="text-sm text-muted-foreground">实时推送中断，正在重连，当前通过轮询更新</p>}
 
         {showBilling ? (
           // 路由直达但没权限（billingOn 关了 / 仅管理员而没登录）：给一枚正经 404，
@@ -610,8 +610,34 @@ export default function App() {
           </a>
         </p>
       </footer>
+      {stalled && <StreamNotice />}
     </div>
     </LatencyStyleContext>
+  )
+}
+
+function StreamNotice() {
+  const [open, setOpen] = useState(true)
+  if (!open) return null
+
+  return (
+    <Toast.Provider label="连接状态" duration={Infinity}>
+      <Toast.Root open={open} onOpenChange={setOpen} type="background"
+        className="flex items-center gap-3 rounded-lg border bg-popover py-2 pr-2 pl-3 text-popover-foreground shadow-md data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] motion-safe:transition-opacity motion-safe:duration-150 motion-safe:starting:opacity-0">
+        <span className="grid size-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
+          <WifiOff className="size-4" aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <Toast.Title className="text-sm font-medium">实时推送中断</Toast.Title>
+          <Toast.Description className="text-xs leading-relaxed text-muted-foreground">正在重连，节点数据暂由轮询更新</Toast.Description>
+        </div>
+        <Toast.Close asChild>
+          <Button type="button" variant="ghost" size="icon" aria-label="关闭连接提示" className="text-muted-foreground"><X aria-hidden="true" /></Button>
+        </Toast.Close>
+      </Toast.Root>
+      <Toast.Viewport label="连接通知（{hotkey}）"
+        className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] z-40 mx-auto w-fit max-w-[calc(100%-1.5rem)] sm:left-auto sm:right-[max(1.5rem,env(safe-area-inset-right))] sm:bottom-[max(1.5rem,env(safe-area-inset-bottom))]" />
+    </Toast.Provider>
   )
 }
 
@@ -622,7 +648,7 @@ function SiteIcon() {
   const [broken, setBroken] = useState(false)
   if (broken) return null
   return (
-    <span className="size-8 shrink-0 overflow-hidden rounded-full ring-1 ring-border/60">
+    <span className="size-8 shrink-0 overflow-hidden rounded-full [corner-shape:round]">
       <img
         src={src}
         alt=""
