@@ -1,5 +1,5 @@
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
-import { Globe as GlobeIcon, Moon, Sun, Wallet, WifiOff, Wrench, X } from "lucide-react"
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
+import { Globe as GlobeIcon, Monitor, Moon, Sun, Wallet, WifiOff, Wrench, X } from "lucide-react"
 import { Toast } from "radix-ui"
 
 import { Billing } from "@/components/Billing"
@@ -20,7 +20,7 @@ import { regionView } from "@/lib/globe"
 import { hasDetailRemarks } from "@/lib/notes"
 import { searchNodes } from "@/lib/search"
 import { hasGroupTabs, hasSummary, isBudgetLayout, LatencyStyleContext, useCardStyle, useGlobeVisible, useLocalFarm, useThemeConfig } from "@/lib/theme-config"
-import { isBeijingNight, parseMapFlowCenter, readThemePreference, resolveDark, type ThemeMode } from "@/lib/site-settings"
+import { parseMapFlowCenter, readThemePreference, THEME_PREFERENCE_KEY, type ThemeMode } from "@/lib/site-settings"
 import type { LatencyStyle, RemarkPlacement } from "@/lib/site-settings"
 import { FarmIcon } from "@/components/FarmIcon"
 
@@ -143,14 +143,19 @@ function useAppRoute() {
 
 const DARK_MEDIA = matchMedia("(prefers-color-scheme: dark)")
 
-/**
- * 访客自己的选择，没有时跟系统的 只有开关写记录：加载时把系统答案存下来会把它钉死
- * `/admin/` 的面板同源共用这个 key，必须守同一条规则
- * 系统答案用订阅（useSyncExternalStore）而非拷进 state：首渲染与挂监听之间落下的
- * 一次翻转才不会漏听
- */
-function useTheme(siteMode: ThemeMode, configReady: boolean) {
+const THEME_LABELS = { system: "系统", light: "亮色", dark: "暗色" } as const
+const NEXT_THEME = { system: "light", light: "dark", dark: "system" } as const
+
+function useTheme(siteMode: ThemeMode, pureBlackDark: boolean) {
   const [saved, setSaved] = useState(readThemePreference)
+  const mode = saved ?? siteMode
+  useEffect(() => {
+    const sync = (event: StorageEvent) => {
+      if (event.key === THEME_PREFERENCE_KEY || event.key === null) setSaved(readThemePreference())
+    }
+    window.addEventListener("storage", sync)
+    return () => window.removeEventListener("storage", sync)
+  }, [])
   const system = useSyncExternalStore(
     (notify) => {
       DARK_MEDIA.addEventListener("change", notify)
@@ -158,67 +163,21 @@ function useTheme(siteMode: ThemeMode, configReady: boolean) {
     },
     () => DARK_MEDIA.matches,
   )
-  // 「随北京时间自动」要自己跨过 19:00 / 07:00：北京时间与系统明暗一样是**外部系统**，
-  // 用订阅而非拷进 state —— 首渲染与挂监听之间的一次翻转才不会漏听 每分钟问一次
-  // 到点前后最多差一分钟；别的档不挂这个定时器
-  const subscribeNight = useCallback(
-    (notify: () => void) => {
-      if (siteMode !== "auto") return () => {}
-      const timer = setInterval(notify, 60_000)
-      return () => clearInterval(timer)
-    },
-    [siteMode],
-  )
-  const night = useSyncExternalStore(subscribeNight, isBeijingNight)
-  // 站长那一档是**默认**；访客点过那枚图标（localStorage 里有 `theme`）就以他的为准
-  const fromSite = siteMode === "auto" ? night : resolveDark(siteMode, system)
-  const dark = saved ? saved === "dark" : fromSite
-
-  useEffect(() => {
+  const dark = mode === "system" ? system : mode === "dark"
+  useLayoutEffect(() => {
     document.documentElement.classList.toggle("dark", dark)
+    document.documentElement.classList.toggle("dark-neutral", dark && !pureBlackDark)
     document.documentElement.style.colorScheme = dark ? "dark" : "light"
-    if (configReady) { try { localStorage.setItem("casurea:site_mode", siteMode) } catch { /* Current session still works. */ } }
-    /**
-     * 手机浏览器那一圈（地址栏 / 状态栏）的 `theme-color` 跟着**页面实际用的**明暗走
-     * index.html 里那两份是按**系统**明暗挑的静态值，「随北京时间自动」在夜里与系统
-     * 相反时两边会打架 —— 先摘掉那两份，再挂一份没有 media 的 颜色取 `--background`
-     * 的实际值（oklch 交给 canvas 读回 sRGB），不手抄 hex
-     */
-    const head = document.head
-    for (const old of head.querySelectorAll('meta[name="theme-color"]')) old.remove()
-    const meta = document.createElement("meta")
-    meta.name = "theme-color"
-    let color = dark ? "#000000" : "#fafafa"
-    const probe = document.createElement("canvas")
-    probe.width = probe.height = 1
-    const ctx = probe.getContext("2d")
-    if (ctx) {
-      // 先铺兜底色：老浏览器不认 oklch 时这次赋值会被忽略，留下的就是它
-      ctx.fillStyle = color
-      ctx.fillStyle = getComputedStyle(document.body).backgroundColor
-      ctx.fillRect(0, 0, 1, 1)
-      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
-      color = `rgb(${r}, ${g}, ${b})`
-    }
-    meta.content = color
-    head.append(meta)
-  }, [dark, siteMode, configReady])
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+    if (meta) meta.content = getComputedStyle(document.body).backgroundColor
+  }, [dark, pureBlackDark])
 
-  return [
-    dark,
-    () => {
-      const next = dark ? "light" : "dark"
-      // 点成与站长那一档一致时**删掉记录**（= 重新跟着站长走，与 useGlobeVisible 同一套口径）
-      const record = (next === "dark") === fromSite ? null : next
-      try {
-        if (record === null) localStorage.removeItem("theme")
-        else localStorage.setItem("theme", record)
-      } catch {
-        // 存储被禁用（隐私模式）：这次会话照样切，只是记不住
-      }
-      setSaved(record)
-    },
-  ] as const
+  const next = NEXT_THEME[mode]
+  const toggle = () => {
+    setSaved(next)
+    try { localStorage.setItem(THEME_PREFERENCE_KEY, next) } catch { /* 当前会话仍可切换 */ }
+  }
+  return { current: mode, toggle, label: `当前主题：${THEME_LABELS[mode]}，切换到${THEME_LABELS[next]}` }
 }
 
 export default function App() {
@@ -238,7 +197,7 @@ export default function App() {
     onChange: chooseLatencyStyle,
   }), [latencyStyle, config.latencyStyle, chooseLatencyStyle])
   // 明暗：站长那一档（`themeMode`）当默认，访客点过顶栏那枚图标就以他的为准
-  const [dark, toggleTheme] = useTheme(config.themeMode, configReady)
+  const theme = useTheme(config.themeMode, config.pureBlackDark)
   // 顶栏那枚入口图标（1.25.0 起没有设置项）：挂载即探一次本站约定的 `/chicken/`，
   // 装了那座小鸡农场才出现、没装不占位（判据是内容而不是状态码，见 useLocalFarm）
   const farmUrl = useLocalFarm()
@@ -506,8 +465,8 @@ export default function App() {
               </a>
             </Button>
           )}
-          <Button variant="ghost" size="icon" onClick={toggleTheme} title="切换主题" aria-label="切换主题">
-            {dark ? <Sun /> : <Moon />}
+          <Button variant="ghost" size="icon" onClick={theme.toggle} title={theme.label} aria-label={theme.label}>
+            {theme.current === "system" ? <Monitor /> : theme.current === "dark" ? <Moon /> : <Sun />}
           </Button>
           </div>
         </div>

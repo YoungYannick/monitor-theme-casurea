@@ -41,8 +41,9 @@ export type ThemeConfig = {
   globeOn: boolean
   /** 地图流向中心：节点 ID 或经度,纬度；空串关闭，沿用原配置键 */
   mapFlowCenterId: string
-  /** 站点用哪一档明暗：随系统 / 随北京时间自动 / 固定亮 / 固定暗（访客自己的开关优先） */
+  /** 站点默认明暗，访客自己的选择优先 */
   themeMode: ThemeMode
+  pureBlackDark: boolean
   /** 页面内容宽度（%）：宽屏生效，1280px 保底；夹在 60–100，默认 85 */
   pageWidth: number
   /** 每行 CODE=人民币汇率，补充或覆盖自动报价；空串完全使用自动报价 */
@@ -60,21 +61,22 @@ export type ThemeConfig = {
   billingExcludeTag: string
 }
 
-/** 四档明暗：`system` 随系统、`auto` 按北京时间自动、`light`/`dark` 固定 */
-export type ThemeMode = "system" | "auto" | "light" | "dark"
+export type ThemeMode = "system" | "light" | "dark"
+export const THEME_PREFERENCE_KEY = "casurea:theme"
+
+function themeModeOf(value: unknown): ThemeMode | null {
+  return value === "system" || value === "light" || value === "dark" ? value : null
+}
 
 /** 存储被浏览器拒绝或偏好值无效时，回落到站点的默认明暗 */
-export function readThemePreference(storage?: Pick<Storage, "getItem">): "light" | "dark" | null {
+export function readThemePreference(storage?: Pick<Storage, "getItem">): ThemeMode | null {
   try {
-    const saved = (storage ?? globalThis.localStorage).getItem("theme")
-    return saved === "light" || saved === "dark" ? saved : null
+    const saved = (storage ?? globalThis.localStorage).getItem(THEME_PREFERENCE_KEY)
+    return themeModeOf(saved)
   } catch {
     return null
   }
 }
-
-/** 四档的取值与顺序（后台那格下拉、`normalizeConfig` 都照它） */
-export const THEME_MODES: ThemeMode[] = ["system", "auto", "light", "dark"]
 
 /** 内容宽度的合法区间（theme.json 的 min/max 同这一对；超出按没保存过处理） */
 export const PAGE_WIDTH_MIN = 60
@@ -88,7 +90,7 @@ export function pageWidthOf(v: unknown): number {
 
 export type MapFlowCenter = { kind: "node"; id: number } | { kind: "coordinates"; location: [number, number] }
 
-/** 单个字段同时接受节点 ID 和经纬度，拒绝缺项、非法数字与越界坐标。 */
+/** 单个字段同时接受节点 ID 和经纬度，拒绝缺项、非法数字与越界坐标 */
 export function parseMapFlowCenter(value: unknown): MapFlowCenter | null {
   if (typeof value !== "string") return null
   const text = value.trim()
@@ -171,6 +173,7 @@ export const DEFAULTS: ThemeConfig = {
   mapFlowCenterId: "",
   // 明暗默认「随系统」
   themeMode: "system",
+  pureBlackDark: true,
   // 内容宽度默认 85%：1280 保底、宽屏放开到 85%（后台可调 60–100）
   pageWidth: 85,
   exchangeRates: "",
@@ -279,8 +282,9 @@ export function normalizeConfig(saved: unknown): ThemeConfig {
     // 开关：只认真布尔 老站点配置里没有这个键（→ 默认显示）；写成 "false" 这种字符串不算数
     globeOn: typeof s.globeOn === "boolean" ? s.globeOn : DEFAULTS.globeOn,
     mapFlowCenterId: flowCenter ? flowCenter.kind === "node" ? String(flowCenter.id) : flowCenter.location.join(",") : "",
-    // 四档明暗：认不出来的取值（旧版本、手改）回落默认，别让页面卡在一个不存在的档上
-    themeMode: THEME_MODES.includes(s.themeMode as ThemeMode) ? (s.themeMode as ThemeMode) : DEFAULTS.themeMode,
+    // 旧的定时档与无效值均回落到随系统
+    themeMode: themeModeOf(s.themeMode) ?? DEFAULTS.themeMode,
+    pureBlackDark: typeof s.pureBlackDark === "boolean" ? s.pureBlackDark : DEFAULTS.pureBlackDark,
     // 内容宽度：旧站点没有这个键（→ 默认 85%）；非数字/越界由 pageWidthOf 收拢
     pageWidth: pageWidthOf(s.pageWidth),
     // 不在这里截断行：过长或无效输入由汇率解析器整项拒绝，避免截出错误金额
@@ -293,37 +297,4 @@ export function normalizeConfig(saved: unknown): ThemeConfig {
     billingExcludeOn: typeof s.billingExcludeOn === "boolean" ? s.billingExcludeOn : DEFAULTS.billingExcludeOn,
     billingExcludeTag: typeof s.billingExcludeTag === "string" ? s.billingExcludeTag.trim() : DEFAULTS.billingExcludeTag,
   }
-}
-
-/**
- * 北京时间（UTC+8）现在是几点（0–23）
- *
- * 用固定偏移而不是 `Intl`：中国全境不实行夏令时，UTC+8 就是北京时间；`Intl` 那套在
- * 少数老浏览器/精简 ICU 上会抛，而这里要的只是一个钟点
- */
-export function beijingHour(at: Date = new Date()): number {
-  return (at.getUTCHours() + 8) % 24
-}
-
-/** 「随北京时间自动切换」的夜间窗口：**19:00 起、次日 07:00 止**（用暗色） */
-export const NIGHT_FROM = 19
-export const NIGHT_TO = 7
-
-/** 按北京时间算，现在是不是夜里（该用暗色） */
-export function isBeijingNight(at: Date = new Date()): boolean {
-  const h = beijingHour(at)
-  return h >= NIGHT_FROM || h < NIGHT_TO
-}
-
-/**
- * 站点设置 + 系统的明暗偏好 → 最终该不该用暗色
- *
- * `auto` 只按钟点走（不查日出日落：那要经纬度与天文算法，而站长要的是「白天亮、晚上暗」）；
- * 访客自己点过那枚太阳/月亮图标的话，组件会拿他的选择**压过**这里的结论
- */
-export function resolveDark(mode: ThemeMode, systemDark: boolean, at: Date = new Date()): boolean {
-  if (mode === "dark") return true
-  if (mode === "light") return false
-  if (mode === "auto") return isBeijingNight(at)
-  return systemDark
 }

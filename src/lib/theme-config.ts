@@ -153,7 +153,15 @@ export function useLocalFarm(): string {
  * 反代拦了——都不该让公开页白屏或缺一块收窄与迁移见 `normalizeConfig`
  */
 export function useThemeConfig(): [ThemeConfig, boolean] {
-  const [config, setConfig] = useState(DEFAULTS)
+  const [config, setConfig] = useState(() => {
+    // 与首屏脚本使用同一份明暗缓存，等待 Hub 时沿用上次的配色
+    try {
+      return normalizeConfig({
+        themeMode: localStorage.getItem("casurea:site_mode"),
+        pureBlackDark: localStorage.getItem("casurea:pure_black_dark") !== "false",
+      })
+    } catch { return DEFAULTS }
+  })
   const [ready, setReady] = useState(false)
   useEffect(() => {
     let active = true
@@ -162,8 +170,13 @@ export function useThemeConfig(): [ThemeConfig, boolean] {
       .then((saved) => {
         if (!active) return
         // 逐项收窄 + 旧值迁移都在 site-settings.ts（那里能单测）
-        setConfig(normalizeConfig(saved))
+        const next = normalizeConfig(saved)
+        setConfig(next)
         setReady(true)
+        try {
+          localStorage.setItem("casurea:site_mode", next.themeMode)
+          localStorage.setItem("casurea:pure_black_dark", String(next.pureBlackDark))
+        } catch { /* 浏览器禁用存储时仍使用本次配置 */ }
       })
       .catch(() => {
         // 取不到设置（旧 hub、反代拦了）就维持默认值：公开页照常渲染，不该白屏或缺一块

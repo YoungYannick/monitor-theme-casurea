@@ -10,11 +10,12 @@
 @source "../src";
 
 @custom-variant dark (&:is(.dark *));
+@custom-variant dark-neutral (&:is(.dark-neutral *));
 
 :root {
   --radius: 0.625rem;
   /* 页面底色浅灰、卡片纯白：两面有亮度差，卡片靠底色就「浮」得出来 */
-  --background: oklch(0.985 0 0);
+  --background: #fafafa;
   --foreground: oklch(0.18 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.18 0 0);
@@ -46,6 +47,7 @@
   --warn: oklch(0.62 0.15 70);
   /* 账单页的到期警告红：与单色的 destructive 区分，亮暗都保持真正的红 */
   --danger: oklch(0.52 0.19 25);
+  --danger-foreground: white;
   /* 地图沿用主题灰阶，陆地与海面通过明度区分，流向与中心圈使用正文色系 */
   --globe-ocean: var(--muted);
   --globe-land: color-mix(in oklch, var(--foreground) 20%, var(--card));
@@ -66,7 +68,7 @@
 
 .dark {
   /* 纯黑（OLED）暗色：底色纯黑、正文纯白，整组灰阶中性无色相；卡片与弱化面在纯黑上抬一档 */
-  --background: oklch(0 0 0);
+  --background: #000;
   --foreground: oklch(1 0 0);
   --card: oklch(0.165 0 0);
   --card-foreground: oklch(1 0 0);
@@ -105,6 +107,37 @@
      the green. */
 }
 
+/* 普通暗色用等量 RGB 构成中性灰阶，在线、离线与到期状态沿用语义色 */
+.dark.dark-neutral {
+  --background: #181818;
+  --foreground: #ededed;
+  --card: #242424;
+  --card-foreground: var(--foreground);
+  --popover: #2c2c2c;
+  --popover-foreground: var(--foreground);
+  --primary: var(--foreground);
+  --primary-foreground: var(--background);
+  --secondary: #323232;
+  --secondary-foreground: var(--foreground);
+  --muted: var(--secondary);
+  --muted-foreground: #b8b8b8;
+  --accent: #383838;
+  --accent-foreground: var(--foreground);
+  --destructive: var(--foreground);
+  --border: #454545;
+  --input: #555;
+  --ring: #919191;
+  --chart-1: #e8e8e8;
+  --chart-2: #cfcfcf;
+  --chart-3: #b6b6b6;
+  --chart-4: #9e9e9e;
+  --chart-5: #878787;
+  --compare-strong: var(--foreground);
+  --compare-soft: var(--chart-5);
+  --danger: #f18f87;
+  --danger-foreground: var(--background);
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -136,6 +169,7 @@
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
 }
 
 @layer base {
@@ -627,6 +661,7 @@ input[type="checkbox"]:focus-visible {
   opacity: 0.62;
 }
 .theme-credit a { color: inherit; text-decoration: none; }
+.dark-neutral .theme-credit { opacity: 0.75; }
 .theme-credit a:hover { text-decoration: underline; }
 
 /* 顶栏那个搜索框（src/components/SearchBox.tsx）：

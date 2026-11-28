@@ -40,7 +40,7 @@ export type TrafficPeak = {
 export const NO_PEAK: TrafficPeak = { down: 0, downAt: null, up: 0, upAt: null }
 
 const DAY_MS = 86_400_000
-/** 北京的固定偏移：中国不实行夏令时，UTC+8 就是北京时间（与 site-settings 的 beijingHour 同一套） */
+/** 北京时间的固定偏移为 UTC+8 */
 const BEIJING_MS = 8 * 3_600_000
 
 /**
@@ -48,8 +48,7 @@ const BEIJING_MS = 8 * 3_600_000
  *
  * 卡片面上那两个数（`day_rx / day_tx`）是 hub 按**它自己的**日历累加的；峰值窗口要是按
  * 访客本地日历裁，同一个站的两个访客会看到两份不同的「今日峰值」，跨时区的访客还会把
- * 昨晚的桶算成今天（甚至全空） 站点这边本来就把「夜里」定在北京时间（见 themeMode 的
- * auto 档），这里沿用同一把尺子：所有访客、所有时区，看到的都是同一段「今天」
+ * 昨晚的桶算成今天（甚至全空）按北京时间统一窗口后，所有访客看到的是同一段「今天」
  * hub 不在 UTC+8 时两者仍有一小时的级差，但至少不再因人而异
  */
 export function dayStart(now = Date.now()): number {

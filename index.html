@@ -3,8 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#fafafa" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Monitor</title>
     <script>
@@ -21,12 +20,18 @@
     </script>
     <script>
       ;(function () {
-        var preference = null, mode = "system"
-        try { preference = localStorage.getItem("theme"); mode = localStorage.getItem("casurea:site_mode") || "system" } catch (e) {}
-        var hour = new Date(Date.now() + 8 * 3600000).getUTCHours()
-        var dark = preference === "dark" || preference !== "light" && (mode === "dark" || mode === "auto" && (hour >= 19 || hour < 7) || mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
+        var mode = "system", pureBlack = true
+        try {
+          var preference = localStorage.getItem("casurea:theme")
+          mode = preference === "light" || preference === "dark" || preference === "system"
+            ? preference : localStorage.getItem("casurea:site_mode")
+          pureBlack = localStorage.getItem("casurea:pure_black_dark") !== "false"
+        } catch (e) {}
+        var dark = mode === "dark" || mode !== "light" && matchMedia("(prefers-color-scheme: dark)").matches
         document.documentElement.classList.toggle("dark", dark)
+        document.documentElement.classList.toggle("dark-neutral", dark && !pureBlack)
         document.documentElement.style.colorScheme = dark ? "dark" : "light"
+        document.querySelector('meta[name="theme-color"]').content = dark ? (pureBlack ? "#000000" : "#181818") : "#fafafa"
       })()
     </script>
     <script src="/title-probe.js"></script>

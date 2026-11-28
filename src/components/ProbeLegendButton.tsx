@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react"
 
 let cancelEndClick: (() => void) | null = null
 
-/** 长按后的兼容点击可能换目标，捕获它；新的手势开始即撤销拦截。 */
+/** 长按后的兼容点击可能换目标，捕获它；新的手势开始即撤销拦截 */
 function suppressLongPressClick() {
   cancelEndClick?.()
   const clear = () => {
@@ -90,7 +90,7 @@ export function ProbeLegendButton({ id, name, stroke, width, loss, shown, highli
       onBlur={() => onHighlight("focus", false)}
       className={`tap tap-y-12 inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring select-none ${row ? "text-left text-sm font-medium" : "border px-2 py-1 text-xs"} ${
         !row && highlighted ? "border-ring bg-muted" : ""
-      } ${row || shown ? "" : "opacity-40"}`}
+      } ${row || shown ? "" : "opacity-40 dark-neutral:text-muted-foreground dark-neutral:opacity-100"}`}
       style={{ WebkitTouchCallout: "none" }}
     >
       {!row && <svg width="14" height="6" className="shrink-0" aria-hidden>
@@ -98,7 +98,7 @@ export function ProbeLegendButton({ id, name, stroke, width, loss, shown, highli
       </svg>}
       <span className="truncate">{name}</span>
       {!row && loss > 0 && (
-        <span className="shrink-0 whitespace-nowrap tabular-nums opacity-60">丢 {loss < 1 ? "<1" : Math.round(loss)}%</span>
+        <span className="shrink-0 whitespace-nowrap tabular-nums opacity-60 dark-neutral:opacity-85">丢 {loss < 1 ? "<1" : Math.round(loss)}%</span>
       )}
     </button>
   )

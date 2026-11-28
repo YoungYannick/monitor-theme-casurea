@@ -151,7 +151,7 @@ function statusCell(row: BillingRow) {
     case "expired":
       return (
         <>
-          <Badge variant="outline" className="border-danger bg-danger font-normal text-white">已到期</Badge>
+          <Badge variant="outline" className="border-danger bg-danger font-normal text-danger-foreground">已到期</Badge>
           <span className="text-xs text-muted-foreground">{row.daysLeft !== null ? `${-row.daysLeft} 天前` : ""}</span>
         </>
       )
@@ -394,14 +394,14 @@ function BillingCalendar({
                   <div
                     onClick={due ? () => onPick(picked === key ? null : key) : undefined}
                     className={`relative flex aspect-square items-center justify-center rounded-md text-sm transition-colors ${
-                      due ? "cursor-pointer" : ""
-                    } ${due ? "font-medium text-foreground" : ""} ${key < todayKey ? "text-muted-foreground/50" : ""} ${
+                      due ? "cursor-pointer font-medium text-foreground" : key < todayKey ? "text-muted-foreground/50 dark-neutral:text-muted-foreground/80" : ""
+                    } ${
                       key === todayKey ? "ring-1 ring-inset ring-foreground/60" : ""
                     } ${picked === key ? "ring-1 ring-primary/60" : ""}`}
                     style={due && heat ? { background: `color-mix(in oklab, var(--warn) ${Math.round(heat * 45)}%, transparent)` } : undefined}
                   >
                     {d}
-                    {due && <span aria-hidden className="tnum absolute right-0.5 top-0.5 text-[10px] font-medium leading-none text-danger">{due.length}</span>}
+                    {due && <span aria-hidden className="tnum absolute right-0.5 top-0.5 text-[10px] font-medium leading-none text-danger dark-neutral:text-foreground">{due.length}</span>}
                   </div>
                 )
                 if (!due) return <div key={key}>{cell}</div>
