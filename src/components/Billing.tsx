@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Popover, Tooltip } from "radix-ui"
 import { ArrowDown, ArrowUpDown, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, Info } from "lucide-react"
 
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { InfoTooltip } from "@/components/InfoTooltip"
+import { useContentTransition } from "@/lib/use-content-transition"
 import { Country, RemarkChips } from "@/components/NodeCard"
 import type { Node } from "@/lib/api"
 import { BILLING_CURRENCIES, billingRowOf, moneyOf, type BillingCurrency, type BillingRow, type BillingStatus } from "@/lib/billing"
@@ -289,6 +290,7 @@ function BillingCalendar({
     return Number.isInteger(y) && Number.isInteger(m) ? { y, m: m - 1 } : null
   }, [picked])
   const ym = pickedYm ?? browsed
+  const monthGrid = useContentTransition<HTMLDivElement>(`${ym.y}-${ym.m}`)
 
   // 30 天内到期（含今天），按剩余天数升序；天数口径与表格状态列同一套 daysUntil
   const upcoming = useMemo(() => {
@@ -381,7 +383,7 @@ function BillingCalendar({
           </div>
 
           {/* 恒定 42 格（6 行）：月份再短也不跳高度，越界的格子空占位 */}
-            <div className="grid grid-cols-7 gap-1 text-center text-xs text-muted-foreground">
+            <div ref={monthGrid} className="grid grid-cols-7 gap-1 text-center text-xs text-muted-foreground">
               {["一", "二", "三", "四", "五", "六", "日"].map((w) => <div key={w} className="py-0.5">{w}</div>)}
               {Array.from({ length: 42 }, (_, i) => {
                 const d = i - offset + 1
@@ -390,19 +392,22 @@ function BillingCalendar({
                 const due = byDay.get(key)
                 // 色阶：到期台数越多背景越浓，选中日用主色描边；背景走「前景色的实色阶」
                 const heat = due ? Math.min(0.25 + (due.length / maxDue) * 0.75, 1) : 0
+                const DayCell = due ? "button" : "div"
                 const cell = (
-                  <div
+                  <DayCell type={due ? "button" : undefined} aria-pressed={due ? picked === key : undefined}
+                    data-linked-day={key}
+                    data-picked={picked === key}
                     onClick={due ? () => onPick(picked === key ? null : key) : undefined}
-                    className={`relative flex aspect-square items-center justify-center rounded-md text-sm transition-colors ${
+                    className={`relative flex aspect-square w-full items-center justify-center rounded-md text-sm transition-colors ${
                       due ? "cursor-pointer font-medium text-foreground" : key < todayKey ? "text-muted-foreground/50 dark-neutral:text-muted-foreground/80" : ""
                     } ${
                       key === todayKey ? "ring-1 ring-inset ring-foreground/60" : ""
-                    } ${picked === key ? "ring-1 ring-primary/60" : ""}`}
+                    }`}
                     style={due && heat ? { background: `color-mix(in oklab, var(--warn) ${Math.round(heat * 45)}%, transparent)` } : undefined}
                   >
                     {d}
                     {due && <span aria-hidden className="tnum absolute right-0.5 top-0.5 text-[10px] font-medium leading-none text-danger dark-neutral:text-foreground">{due.length}</span>}
-                  </div>
+                  </DayCell>
                 )
                 if (!due) return <div key={key}>{cell}</div>
                 return (
@@ -475,8 +480,9 @@ function BillingCalendar({
                       return (
                         <li key={n.id} className="min-w-0 flex-[1_1_14rem] max-w-[28rem]">
                           <button
+                            aria-pressed={picked === n.expires_at!.slice(0, 10)}
                             onClick={() => focusNode(n)}
-                            className="w-full cursor-pointer rounded-lg corner-squircle border bg-background/40 p-2.5 text-left transition-colors hover:bg-muted/50"
+                            className="w-full cursor-pointer rounded-lg corner-squircle border bg-background/40 p-2.5 text-left transition-colors hover:bg-muted/50 aria-pressed:border-foreground/50 aria-pressed:bg-muted"
                           >
                             <div className="flex items-center gap-2">
                               <span className="min-w-0 flex-1 truncate text-sm font-medium">{n.name}</span>
@@ -564,6 +570,24 @@ export function Billing({ nodes, exchangeRates = "", excludeTag = "" }: { nodes:
 
   // 日历选中日：表格只列当天到期的机器；null 为不筛
   const [picked, setPicked] = useState<string | null>(null)
+  const tableCard = useRef<HTMLDivElement>(null)
+  const previousHeight = useRef<number | null>(null)
+  const tableRows = useContentTransition<HTMLTableSectionElement>(picked)
+  const pickDate = (day: string | null) => {
+    if (picked === day) return
+    previousHeight.current = tableCard.current?.getBoundingClientRect().height ?? null
+    setPicked(day)
+  }
+  useLayoutEffect(() => {
+    const card = tableCard.current
+    const from = previousHeight.current
+    previousHeight.current = null
+    if (!card || from === null || !matchMedia("(prefers-reduced-motion: no-preference)").matches) return
+    const to = card.getBoundingClientRect().height
+    if (Math.abs(to - from) < 1) return
+    const animation = card.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: 260, easing: "ease-out" })
+    return () => animation.cancel()
+  }, [picked])
   // 表头排序：null = 默认权重序（站长在面板里排的节点顺序，保留不动），点击循环 升→降→默认
   const [sort, setSort] = useState<Sort | null>(null)
   const shownRows = useMemo(() => {
@@ -612,11 +636,11 @@ export function Billing({ nodes, exchangeRates = "", excludeTag = "" }: { nodes:
         {statCard("已到期", `${expired} 台`)}
       </div>
 
-      <BillingCalendar nodes={nodes} rows={rows} currencyCode={currency.code} picked={picked} onPick={setPicked} />
+      <BillingCalendar nodes={nodes} rows={rows} currencyCode={currency.code} picked={picked} onPick={pickDate} />
 
       {/* 逐台列账：表格，窄屏横向滑动；日历选中了日子就只列当天到期的 */}
-      <Card className="gap-0 overflow-hidden p-0">
-        <div className="overflow-x-auto">
+      <Card ref={tableCard} className="gap-0 overflow-hidden p-0">
+        <div className="shrink-0 overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b bg-muted/40 text-muted-foreground">
@@ -629,7 +653,7 @@ export function Billing({ nodes, exchangeRates = "", excludeTag = "" }: { nodes:
                 <SortTh label="剩余价值" k="remaining" sort={sort} onPick={setSort} align="right" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-border/60">
+            <tbody ref={tableRows} className="divide-y divide-border/60">
               {shownRows.map((r) => (
                 <tr key={r.node.id} className="hover:bg-muted/50">
                   <td className="max-w-[16rem] px-3 py-2 text-sm font-medium">
@@ -647,9 +671,10 @@ export function Billing({ nodes, exchangeRates = "", excludeTag = "" }: { nodes:
                   <td className="tnum whitespace-nowrap px-3 py-2">
                     {r.node.expires_at ? (
                       <button
-                        onClick={() => setPicked(picked === r.node.expires_at!.slice(0, 10) ? null : r.node.expires_at!.slice(0, 10))}
+                        aria-pressed={picked === r.node.expires_at.slice(0, 10)}
+                        onClick={() => pickDate(picked === r.node.expires_at!.slice(0, 10) ? null : r.node.expires_at!.slice(0, 10))}
                         title="在日历中查看"
-                        className="cursor-pointer underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
+                        className="cursor-pointer underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground aria-pressed:decoration-solid"
                       >
                         {r.node.expires_at.slice(0, 10)}
                       </button>
@@ -685,7 +710,7 @@ export function Billing({ nodes, exchangeRates = "", excludeTag = "" }: { nodes:
         {picked !== null && (
           <div className="flex items-center justify-between gap-2 border-t bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
             <span>只看 {picked} 到期的机器（{shownRows.length} 台）</span>
-            <button onClick={() => setPicked(null)} className="cursor-pointer rounded-md border bg-background px-2 py-0.5 transition-colors hover:bg-muted">
+            <button onClick={() => pickDate(null)} className="cursor-pointer rounded-md border bg-background px-2 py-0.5 transition-colors hover:bg-muted">
               取消筛选
             </button>
           </div>

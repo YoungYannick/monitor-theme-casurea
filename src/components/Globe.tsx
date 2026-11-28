@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react"
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react"
 import { ChevronLeft, ChevronRight, Minus, Pause, Play, Plus, X } from "lucide-react"
 import { Dialog, Tooltip } from "radix-ui"
 
@@ -48,6 +48,8 @@ let labelCtx: CanvasRenderingContext2D | null | undefined
 const MAP_MODE_KEY = "casurea:map_mode"
 const MAP_SPIN_KEY = "casurea:map_spin"
 type MapMode = "3d" | "2d"
+type ZoomAnchor = { x: number; y: number }
+type CameraMotion = { frame: number; target: number; zoom?: { anchor?: ZoomAnchor } }
 
 function savedMode(): MapMode {
   try { return localStorage.getItem(MAP_MODE_KEY) === "2d" ? "2d" : "3d" } catch { return "3d" }
@@ -256,9 +258,12 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   const [zooming, setZooming] = useState(false)
   const [zoomHint, setZoomHint] = useState(false)
   const zoomRef = useRef(zoom)
-  useEffect(() => {
-    zoomRef.current = zoom
-  }, [zoom])
+  const cameraMotion = useRef<CameraMotion | null>(null)
+  const overviewZoom = useRef<number | null>(null)
+  const cancelMotion = () => {
+    if (cameraMotion.current) cancelAnimationFrame(cameraMotion.current.frame)
+    cameraMotion.current = null
+  }
   const flowMaskId = useId()
   const beaconGlowId = useId()
   const shadeId = useId()
@@ -295,6 +300,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   const pointers = useRef(new Map<number, { x: number; y: number }>())
   const pinch = useRef<{ distance: number } | null>(null)
   const zoomAtRef = useRef<(value: number, client?: { x: number; y: number }) => void>(() => {})
+  const wheelZoom = useRef<(factor: number, client: { x: number; y: number }) => void>(() => {})
   const flashHintRef = useRef<() => void>(() => {})
   const choiceHost = useRef<HTMLDivElement>(null)
   const dialogDrag = useRef<{ id: number; x: number; y: number; startX: number; startY: number } | null>(null)
@@ -369,6 +375,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button) return
+    cancelMotion()
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     // 第二根手指落下即进入双指缩放：先放开单指拖拽，避免缩放时地图跟着跑
     if (pointers.current.size === 2) {
@@ -417,7 +424,9 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
         e.preventDefault()
         const ratio = distance / pinchState.distance
         // 双指间距变化按比例走，锚点是两指中点
-        if (Math.abs(ratio - 1) > 0.002) {
+        if (ratio !== 1) {
+          overviewZoom.current = null
+          holdRotation()
           zoomAtRef.current(zoomRef.current * ratio, { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 })
         }
         pinchState.distance = distance
@@ -549,24 +558,37 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     if (!key || (key === region && group === regionGroup)) {
       onRegion(null, null)
       setPinned(false)
-      setFlatView(MAP_DEFAULT_CENTER)
+      const target = overviewZoom.current ?? zoomRef.current
+      overviewZoom.current = null
+      if (mode === "2d") travelTo(MAP_DEFAULT_CENTER, target)
+      else { setFlatView(MAP_DEFAULT_CENTER); travelTo(view, target) }
       return
     }
     onRegion(key, group)
     if (aim) {
-      setView({ lon: wrapLon(aim[0]), lat: clampLat(aim[1]) })
-      setFlatView({ lon: wrapLon(aim[0]), lat: Math.max(-flatLatLimit, Math.min(flatLatLimit, aim[1])) })
+      const center = { lon: wrapLon(aim[0]), lat: aim[1] }
+      const current = cameraMotion.current?.target ?? zoomRef.current
+      const target = Math.max(current, mode === "3d" ? 120 : 135)
+      if (target > current && overviewZoom.current === null) overviewZoom.current = current
+      if (mode === "3d") setFlatView(center)
+      else setView({ ...center, lat: clampLat(center.lat) })
+      travelTo(center, target)
       setPinned(true)
     }
   }
 
   const chooseMode = (next: MapMode) => {
+    if (next === mode) return
+    cancelMotion()
+    overviewZoom.current = null
+    zoomRef.current = next === "3d" ? globeZoom : mapZoom
     setHoveredKey(null)
     setFocusedKey(null)
     setMode(next)
     saveMapPreference(MAP_MODE_KEY, next)
   }
   const toggleRotation = () => {
+    cancelMotion()
     const next = !rotationOn
     setRotating(next)
     if (next) setPinned(false)
@@ -713,6 +735,9 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     }
     zoomRef.current = next
     setZoom(next)
+  }
+
+  const holdRotation = () => {
     // 缩放会改写相机，先停一会儿自转，手松开再恢复
     setZooming(true)
     if (zoomingTimer.current !== null) window.clearTimeout(zoomingTimer.current)
@@ -720,6 +745,64 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
       zoomingTimer.current = null
       setZooming(false)
     }, 700)
+  }
+
+  // 经纬度、投影、节点和流线共用每一帧相机参数；滚轮连发从当前画面续接到累计倍率
+  const tweenCamera = (target: number, duration: number, draw: (progress: number) => void) => {
+    cancelMotion()
+    holdRotation()
+    if (reduced) { draw(1); return }
+    const started = performance.now()
+    const motion = { frame: 0, target }
+    cameraMotion.current = motion
+    const tick = (now: number) => {
+      const t = REDUCE.matches ? 1 : Math.max(0, Math.min(1, (now - started) / duration))
+      draw(t)
+      if (t < 1) motion.frame = requestAnimationFrame(tick)
+      else cameraMotion.current = null
+    }
+    motion.frame = requestAnimationFrame(tick)
+  }
+  const smoothZoom = (value: number, client?: ZoomAnchor) => {
+    overviewZoom.current = null
+    const target = Math.max(GLOBE_ZOOM.min, Math.min(GLOBE_ZOOM.max, value))
+    holdRotation()
+    const current = cameraMotion.current
+    if (current?.zoom && !reduced) {
+      current.target = target
+      current.zoom.anchor = client
+      return
+    }
+    cancelMotion()
+    if (reduced || zoomRef.current === target) { applyZoom(target, client); return }
+    const motion = { frame: 0, target, zoom: { anchor: client } }
+    cameraMotion.current = motion
+    let last = performance.now()
+    const tick = (now: number) => {
+      // 连续滚轮只改目的倍率，不重启帧循环 按经过时间追近，60/120Hz 的速度一致
+      const remaining = Math.log(zoomRef.current / motion.target)
+      const done = Math.abs(remaining) < 0.001 || REDUCE.matches
+      const decay = Math.exp(-Math.max(0, now - last) / 44)
+      zoomAtRef.current(done ? motion.target : motion.target * Math.exp(remaining * decay), motion.zoom.anchor)
+      last = now
+      if (done) cameraMotion.current = null
+      else motion.frame = requestAnimationFrame(tick)
+    }
+    motion.frame = requestAnimationFrame(tick)
+  }
+  const travelTo = (center: { lon: number; lat: number }, target: number) => {
+    const from = mode === "3d" ? view : { lon: flatView.lon, lat: flatLat }
+    const fromZoom = zoomRef.current
+    const delta = wrapLon(center.lon - from.lon)
+    const limit = flatLatLimitAt(target)
+    const latitude = mode === "3d" ? clampLat(center.lat) : Math.max(-limit, Math.min(limit, center.lat))
+    tweenCamera(target, 280 + Math.min(260, Math.hypot(delta, latitude - from.lat) * 2), (t) => {
+      const progress = t * t * (3 - 2 * t)
+      applyZoom(fromZoom * (target / fromZoom) ** progress)
+      const position = { lon: wrapLon(from.lon + delta * progress), lat: from.lat + (latitude - from.lat) * progress }
+      if (mode === "3d") setView(position)
+      else setFlatView(position)
+    })
   }
 
   const flashHint = () => {
@@ -731,10 +814,11 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     }, 1400)
   }
 
-  // eslint-disable-next-line react/refs -- 原生事件回调要拿到最新的缩放实现
-  zoomAtRef.current = applyZoom
-  // eslint-disable-next-line react/refs -- 同上
-  flashHintRef.current = flashHint
+  useLayoutEffect(() => {
+    zoomAtRef.current = applyZoom
+    wheelZoom.current = (factor, client) => smoothZoom((cameraMotion.current?.target ?? zoomRef.current) * factor, client)
+    flashHintRef.current = flashHint
+  })
 
   // 只接管 Ctrl/Cmd + 滚轮：普通滚轮照常滚页面，这里只闪一下操作提示
   useEffect(() => {
@@ -747,7 +831,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
         const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1
         const delta = event.deltaY * unit
         if (!delta) return
-        zoomAtRef.current(zoomRef.current * Math.exp(-delta * 0.0015), { x: event.clientX, y: event.clientY })
+        wheelZoom.current(Math.exp(-delta * 0.0015), { x: event.clientX, y: event.clientY })
         return
       }
       if (event.deltaX || event.deltaY) flashHintRef.current()
@@ -772,6 +856,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   }, [])
 
   useEffect(() => () => {
+    cancelMotion()
     if (zoomingTimer.current !== null) window.clearTimeout(zoomingTimer.current)
     if (hintTimer.current !== null) window.clearTimeout(hintTimer.current)
   }, [])
@@ -887,14 +972,18 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
             </Button>
           </div>
           <div className="globe-controls" role="group" aria-label="地图缩放">
-            <Button variant="ghost" size="icon-sm" className="globe-zoom-button" aria-label="缩小地球" title="缩小地球" disabled={zoom <= GLOBE_ZOOM.min} onClick={() => setZoom((value) => Math.max(GLOBE_ZOOM.min, Math.round(value / 1.25)))}>
+            <Button variant="ghost" size="icon-sm" className="globe-zoom-button" aria-label="缩小地球" title="缩小地球" disabled={zoom <= GLOBE_ZOOM.min} onClick={() => smoothZoom(Math.round((cameraMotion.current?.target ?? zoomRef.current) / 1.25))}>
               <Minus />
             </Button>
-            <Button variant="ghost" size="icon-sm" className="globe-zoom-button" aria-label="放大地球" title="放大地球" disabled={zoom >= GLOBE_ZOOM.max} onClick={() => setZoom((value) => Math.min(GLOBE_ZOOM.max, Math.round(value * 1.25)))}>
+            <Button variant="ghost" size="icon-sm" className="globe-zoom-button" aria-label="放大地球" title="放大地球" disabled={zoom >= GLOBE_ZOOM.max} onClick={() => smoothZoom(Math.round((cameraMotion.current?.target ?? zoomRef.current) * 1.25))}>
               <Plus />
             </Button>
             <output className="tnum" aria-label={`当前缩放 ${Math.round(zoom)}%`}>{Math.round(zoom)}%</output>
-            <Button variant="ghost" size="sm" className="globe-zoom-reset" aria-label="重置地球缩放" title="恢复默认缩放比例" disabled={zoomResetDisabled} onClick={() => { setZoom(defaultZoom); if (mode === "2d") setFlatView(flatHome) }}>重置</Button>
+            <Button variant="ghost" size="sm" className="globe-zoom-reset" aria-label="重置地球缩放" title="恢复默认缩放比例" disabled={zoomResetDisabled} onClick={() => {
+              overviewZoom.current = null
+              if (mode === "2d") travelTo(flatHome, defaultZoom)
+              else smoothZoom(defaultZoom)
+            }}>重置</Button>
           </div>
         </div>
       </div>

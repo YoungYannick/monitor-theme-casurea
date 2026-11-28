@@ -1,4 +1,5 @@
-import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
+import { flushSync } from "react-dom"
 import { Globe as GlobeIcon, Monitor, Moon, Sun, Wallet, WifiOff, Wrench, X } from "lucide-react"
 import { Toast } from "radix-ui"
 
@@ -10,6 +11,8 @@ import { DetailLoader, warmNodeDetail } from "@/components/DetailLoader"
 import { NodeSortMenu } from "@/components/NodeSortMenu"
 import { captureResourceReadings, isResourceSort, savedNodeSort, savedNodeSortDirection, saveNodeSort, sortNodes, type NodeSort, type NodeSortDirection, type NodeSortPreference } from "@/lib/node-sort"
 import { useBillingRates } from "@/lib/use-exchange-rates"
+import { useAnimatedPresence } from "@/lib/use-animated-presence"
+import { useContentTransition } from "@/lib/use-content-transition"
 import { Globe } from "@/components/Globe"
 import { SearchBox, SearchRow } from "@/components/SearchBox"
 import { SummaryCards } from "@/components/Summary"
@@ -142,16 +145,21 @@ function useAppRoute() {
 }
 
 const DARK_MEDIA = matchMedia("(prefers-color-scheme: dark)")
+const MOTION_OK = matchMedia("(prefers-reduced-motion: no-preference)")
 
 const THEME_LABELS = { system: "系统", light: "亮色", dark: "暗色" } as const
 const NEXT_THEME = { system: "light", light: "dark", dark: "system" } as const
 
 function useTheme(siteMode: ThemeMode, pureBlackDark: boolean) {
   const [saved, setSaved] = useState(readThemePreference)
+  const pending = useRef<ThemeMode | null>(null)
   const mode = saved ?? siteMode
   useEffect(() => {
     const sync = (event: StorageEvent) => {
-      if (event.key === THEME_PREFERENCE_KEY || event.key === null) setSaved(readThemePreference())
+      if (event.key === THEME_PREFERENCE_KEY || event.key === null) {
+        pending.current = null
+        setSaved(readThemePreference())
+      }
     }
     window.addEventListener("storage", sync)
     return () => window.removeEventListener("storage", sync)
@@ -174,8 +182,23 @@ function useTheme(siteMode: ThemeMode, pureBlackDark: boolean) {
 
   const next = NEXT_THEME[mode]
   const toggle = () => {
-    setSaved(next)
-    try { localStorage.setItem(THEME_PREFERENCE_KEY, next) } catch { /* 当前会话仍可切换 */ }
+    // 快速连点按最后一次选择往下轮换，即便浏览器还在抓取前一帧
+    const target = NEXT_THEME[pending.current ?? mode]
+    const nextDark = target === "system" ? system : target === "dark"
+    pending.current = target
+    try { localStorage.setItem(THEME_PREFERENCE_KEY, target) } catch { /* 当前会话仍可切换 */ }
+    const apply = () => {
+      if (pending.current !== target) return
+      pending.current = null
+      setSaved(target)
+    }
+    if (nextDark !== dark && MOTION_OK.matches && document.startViewTransition) {
+      const transition = document.startViewTransition(() => flushSync(apply))
+      // 后一次切换会跳过前一次的截图，浏览器仍然执行更新回调
+      void transition.ready.catch(() => {})
+    } else {
+      apply()
+    }
   }
   return { current: mode, toggle, label: `当前主题：${THEME_LABELS[mode]}，切换到${THEME_LABELS[next]}` }
 }
@@ -208,6 +231,7 @@ export default function App() {
   // 路由拆开用：open 喂给详情逻辑、showBilling 喂给账单页（两者互斥，由路由保证）
   const open = route.node
   const showBilling = route.billing
+  const page = useContentTransition<HTMLElement>(showBilling ? "billing" : open === null ? "home" : `node-${open}`)
   // 列表的分组标签放在 App：进详情页再回来不丢
   const [group, setGroup] = useState<string | null>(null)
   // 地球侧栏里选中的地区：同理留在这儿
@@ -325,6 +349,10 @@ export default function App() {
   //   · 下面的列表再按地区收窄一层（`listView`）
   // 这样「上头写着 JP 4 台、下面只剩 2 张卡片」不会出现：地球是分组的地图，不是列表的地图
   const regions = regionView(view.shown, globeOn ? region : null, regionGroup)
+  const selectRegion = (key: string | null, group: string | null) => {
+    setRegion(key)
+    setRegionGroup(group)
+  }
   // 再叠一层搜索（口径见 @/lib/search）：这一层与地区筛选同一套——**下面那张列表与上面
   // 那行概览卡片一起收窄**，地球仍然是「分组的地图」（它画的是分组里有哪些地方，
   // 不是搜索结果热力图；地区列表点一行照样能把列表收窄到那个地区）
@@ -448,7 +476,7 @@ export default function App() {
               onClick={() => {
                 // ★关掉地球时**顺手清掉地区筛选**：那列地区长在地球里，地球一藏，
                 // 「怎么取消」就没地方点了地区筛选本来就属于那张地图
-                if (globeOn) setRegion(null)
+                if (globeOn) selectRegion(null, null)
                 toggleGlobe()
               }}
               title={globeOn ? "隐藏节点地球" : "显示节点地球"}
@@ -477,9 +505,7 @@ export default function App() {
       </header>
 
       {/* ★ 内容宽度：1280 保底、宽屏放开到后台「内容宽度」设置（默认 85%，60–100 可调） —— header 与 footer 同此一条 */}
-      <main className="mx-auto w-full flex-1 space-y-5 px-4 py-4 sm:px-6" style={{ maxWidth: contentMax }}>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-
+      <main ref={page} className="mx-auto w-full flex-1 space-y-5 px-4 py-4 sm:px-6" style={{ maxWidth: contentMax }}>
         {showBilling ? (
           // 路由直达但没权限（billingOn 关了 / 仅管理员而没登录）：给一枚正经 404，
           // 不亮出内容也不假装是列表页
@@ -530,9 +556,9 @@ export default function App() {
                 「价值版」只是同一行换一副面孔，组件另收一个 finance 开关 */}
             {hasSummary(config.listTop) && <SummaryCards nodes={found.shown} finance={isBudgetLayout(config.listTop)} searching={found.active} exchangeRates={config.exchangeRates} excludeTag={config.billingExcludeOn ? config.billingExcludeTag : ""} onOpenBilling={billingVisible ? () => goBilling(true) : undefined} />}
             {/* 节点地球：概览卡片之下、列表之上（上游就是这个次序） */}
-            {globeOn && (
-              <Globe nodes={view.shown} flowCenter={mapFlowCenter} region={regions.current} regionGroup={regions.group} onRegion={(key, group) => { setRegion(key); setRegionGroup(group) }} onOpen={go} onWarm={warmDetail} />
-            )}
+            {config.globeOn && <GlobeDisclosure open={globeOn}>
+              <Globe nodes={view.shown} flowCenter={mapFlowCenter} region={regions.current} regionGroup={regions.group} onRegion={selectRegion} onOpen={go} onWarm={warmDetail} />
+            </GlobeDisclosure>}
             {/* 一台都剩不下时说清楚是谁筛没的、去哪儿取消 —— 否则一片空白像站点坏了
                 搜索那一层排在前面：它是访客刚动手的那层 */}
             {found.active && found.shown.length === 0 ? (
@@ -569,13 +595,22 @@ export default function App() {
           </a>
         </p>
       </footer>
-      {stalled && <StreamNotice />}
+      {(stalled || error) && <StreamNotice error={error} />}
     </div>
     </LatencyStyleContext>
   )
 }
 
-function StreamNotice() {
+function GlobeDisclosure({ open, children }: { open: boolean; children: ReactNode }) {
+  const { ref, present } = useAnimatedPresence<HTMLDivElement>(open)
+  return (
+    <div ref={ref} className="globe-disclosure" data-state={open ? "open" : "closed"} inert={!open}>
+      <div className="min-h-0 overflow-clip">{present && children}</div>
+    </div>
+  )
+}
+
+function StreamNotice({ error }: { error: string | null }) {
   const [open, setOpen] = useState(true)
   if (!open) return null
 
@@ -587,8 +622,10 @@ function StreamNotice() {
           <WifiOff className="size-4" aria-hidden="true" />
         </span>
         <div className="min-w-0">
-          <Toast.Title className="text-sm font-medium">实时推送中断</Toast.Title>
-          <Toast.Description className="text-xs leading-relaxed text-muted-foreground">正在重连，节点数据暂由轮询更新</Toast.Description>
+          <Toast.Title className="text-sm font-medium">{error ? "节点数据暂未更新" : "实时推送中断"}</Toast.Title>
+          <Toast.Description className="line-clamp-2 break-words text-xs leading-relaxed text-muted-foreground">
+            {error ? `正在自动重试 · ${error}` : "正在重连，节点数据暂由轮询更新"}
+          </Toast.Description>
         </div>
         <Toast.Close asChild>
           <Button type="button" variant="ghost" size="icon" aria-label="关闭连接提示" className="text-muted-foreground"><X aria-hidden="true" /></Button>
@@ -663,6 +700,7 @@ function NodeList({ view, group, onGroup, sort, sortDirection, onSort, onOpen, o
   cursorId: number | null
 }) {
   const { groups, current, shown, tabs, total, showTabs } = view
+  const sortedList = useContentTransition<HTMLDivElement>(`${sort}-${sortDirection}`, 0.88)
   // 首屏先画一屏的量，剩下的分帧补上（见 useProgressive）
   const required = cursorId === null ? 0 : shown.findIndex((node) => node.id === cursorId) + 1
   const limit = Math.max(useProgressive(shown.length), required)
@@ -689,7 +727,7 @@ function NodeList({ view, group, onGroup, sort, sortDirection, onSort, onOpen, o
               aria-pressed={current === value}
               size="sm"
               variant={current === value ? "secondary" : "ghost"}
-              className="shrink-0"
+              className="shrink-0 transition-colors motion-reduce:transition-none"
               onClick={() => onGroup(value)}
             >
               {label}
@@ -700,21 +738,23 @@ function NodeList({ view, group, onGroup, sort, sortDirection, onSort, onOpen, o
       )}
       <NodeSortMenu value={sort} direction={sortDirection} onPick={onSort} />
       </div>}
-      {total === 0 ? (
-        <p className="py-16 text-center text-sm text-muted-foreground">还没有节点</p>
-      ) : cardStyle === "compact" ? (
-        <CompactList nodes={list} onOpen={onOpen} onWarm={onWarm} historyDays={historyDays} remarkPlacement={remarkPlacement} terms={terms} cursorId={cursorId} />
-      ) : (
-        // 列数自适应（auto-fill + minmax），不再按断点写死：容器多宽就排多少列——宽屏
-        // 内容宽度（默认 85%）接管后自动排到 5、6 列，卡片宽度始终夹在下限与均分之间 下限按形态分：
-        // 详细两档内容密，320px（1230px 容器仍是 3 列）；其余四档 264px（仍是 4 列）
-        // `min(下限,100%)` 兜住 320px 老手机：窄屏退成单列而不是横向溢出
-        <div data-card-style={cardStyle} className={`grid items-start gap-3 ${cardStyle === "detailed" || cardStyle === "detailedNoLatency" ? "grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))]" : cardStyle === "wide" ? "grid-cols-[repeat(auto-fill,minmax(min(450px,100%),1fr))]" : "grid-cols-[repeat(auto-fill,minmax(min(264px,100%),1fr))]"}`}>
-          {list.map((n) => (
-            <NodeCard key={n.id} node={n} onOpen={() => onOpen(n.id)} onWarm={onWarm} latencyLines={latencyLines} cardStyle={cardStyle} remarkPlacement={remarkPlacement} terms={terms} selected={n.id === cursorId} />
-          ))}
-        </div>
-      )}
+      <div ref={sortedList} data-node-list="">
+        {total === 0 ? (
+          <p className="py-16 text-center text-sm text-muted-foreground">还没有节点</p>
+        ) : cardStyle === "compact" ? (
+          <CompactList nodes={list} onOpen={onOpen} onWarm={onWarm} historyDays={historyDays} remarkPlacement={remarkPlacement} terms={terms} cursorId={cursorId} />
+        ) : (
+          // 列数自适应（auto-fill + minmax），不再按断点写死：容器多宽就排多少列——宽屏
+          // 内容宽度（默认 85%）接管后自动排到 5、6 列，卡片宽度始终夹在下限与均分之间 下限按形态分：
+          // 详细两档内容密，320px（1230px 容器仍是 3 列）；其余四档 264px（仍是 4 列）
+          // `min(下限,100%)` 兜住 320px 老手机：窄屏退成单列而不是横向溢出
+          <div data-card-style={cardStyle} className={`grid items-start gap-3 ${cardStyle === "detailed" || cardStyle === "detailedNoLatency" ? "grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))]" : cardStyle === "wide" ? "grid-cols-[repeat(auto-fill,minmax(min(450px,100%),1fr))]" : "grid-cols-[repeat(auto-fill,minmax(min(264px,100%),1fr))]"}`}>
+            {list.map((n) => (
+              <NodeCard key={n.id} node={n} onOpen={() => onOpen(n.id)} onWarm={onWarm} latencyLines={latencyLines} cardStyle={cardStyle} remarkPlacement={remarkPlacement} terms={terms} selected={n.id === cursorId} />
+            ))}
+          </div>
+        )}
+      </div>
     </>
   )
 }

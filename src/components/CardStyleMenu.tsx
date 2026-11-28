@@ -3,6 +3,7 @@ import { createPortal } from "react-dom"
 import { Activity, AlignJustify, Check, Columns2, Grid2x2, LayoutGrid, Rows3, Rows2, Table } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { useAnimatedPresence } from "@/lib/use-animated-presence"
 import type { ThemeConfig } from "@/lib/site-settings"
 
 type CardStyle = ThemeConfig["cardStyle"]
@@ -37,13 +38,13 @@ export function CardStyleMenu({ value, siteDefault, onPick }: {
 }) {
   const [open, setOpen] = useState(false)
   const box = useRef<HTMLSpanElement>(null)
-  const menu = useRef<HTMLSpanElement>(null)
+  const { ref: menu, present } = useAnimatedPresence<HTMLSpanElement>(open)
   // 浮层的落点（宿主 + 坐标），开着的时候才非空；见下面 useLayoutEffect 那段注释
   const [spot, setSpot] = useState<{ host: HTMLElement; top: number; right: number } | null>(null)
   const mounted = open && spot !== null
   useEffect(() => {
     if (mounted) menu.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus()
-  }, [mounted])
+  }, [mounted, menu])
 
   // ★ 浮层**不能**长在按钮里：按钮住在顶栏那条 `overflow-x-auto` 的图标带里，越界的子元素
   //   会被裁掉，点开后菜单几乎整个被裁没，看着就是「点了没反应」所以浮层经 portal 挂到
@@ -88,7 +89,7 @@ export function CardStyleMenu({ value, siteDefault, onPick }: {
       document.removeEventListener("pointerdown", onDown)
       document.removeEventListener("keydown", onKey)
     }
-  }, [open])
+  }, [open, menu])
 
   return (
     <span className="relative inline-flex" ref={box}>
@@ -104,12 +105,14 @@ export function CardStyleMenu({ value, siteDefault, onPick }: {
       >
         <LayoutGrid />
       </Button>
-      {open && spot && createPortal(
+      {present && spot && createPortal(
         <span
           ref={menu}
           role="menu"
           aria-label="卡片形态"
           data-style-menu=""
+          data-state={open ? "open" : "closed"}
+          inert={!open}
           onKeyDown={(event) => {
             const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button")]
             const current = items.indexOf(document.activeElement as HTMLButtonElement)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
 
 import { TimeChart, type ChartRow, type ChartSeries } from "@/components/Chart"
 import { PingTooltip } from "@/components/ChartTooltip"
@@ -25,25 +25,6 @@ function compareStyle(index: number, count: number) {
 const milliseconds = (value: number) => `${Number(value.toFixed(1))} ms`
 const lossLabel = (value: number) => Number.isFinite(value) && value > 0 ? value < 1 ? "<1%" : `${Math.min(100, Math.round(value))}%` : "0%"
 
-/** 名称和读数始终保留，只绘制滚动视口附近的曲线 */
-function DeferredChart({ root, children }: { root: RefObject<HTMLDivElement | null>; children: ReactNode }) {
-  const target = useRef<HTMLDivElement>(null)
-  const [visible, setVisible] = useState(false)
-  useEffect(() => {
-    const el = target.current
-    if (!el) return
-    if (typeof IntersectionObserver === "undefined") {
-      // oxlint-disable-next-line react/set-state-in-effect
-      setVisible(true)
-      return
-    }
-    const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), { root: root.current, rootMargin: "180px 0px" })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [root])
-  return <div ref={target} className="h-28 w-full text-muted-foreground">{visible ? children : <div className="h-full rounded-sm bg-muted/20" />}</div>
-}
-
 export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, smoothLines, from, to, onZoom, state, onStateChange }: {
   rows: ChartRow[]
   probes: Probe[]
@@ -59,13 +40,19 @@ export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, 
   onStateChange: Dispatch<SetStateAction<LatencyChartSelection>>
 }) {
   const { view, ids: selection, solo } = state
-  const setView = (view: LatencyChartSelection["view"]) => onStateChange((previous) => ({ ...previous, view }))
-  const setSolo = (solo: number | null) => onStateChange((previous) => ({ ...previous, solo }))
+  const [visibleRows, setVisibleRows] = useState<Set<number>>(() => new Set())
   const [hovered, setHovered] = useState<number | null>(null)
   const [focused, setFocused] = useState<number | null>(null)
   const [axisLeft, setAxisLeft] = useState(24)
   const scroller = useRef<HTMLDivElement>(null)
   const scrollTop = useRef(0)
+  const setView = (next: LatencyChartSelection["view"], probeId?: number) => {
+    if (scroller.current) scrollTop.current = scroller.current.scrollTop
+    onStateChange((previous) => ({
+      ...previous, view: next, solo: next === "rows" ? null : probeId ?? previous.solo,
+      hidden: probeId === undefined ? previous.hidden : previous.hidden.filter((id) => id !== probeId),
+    }))
+  }
   const [more, setMore] = useState(false)
   const selected = selection.filter((id) => probes.some((probe) => probe.id === id))
   const soloAvailable = solo !== null && probes.some((probe) => probe.id === solo)
@@ -103,7 +90,7 @@ export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, 
       return { ...previous, ids: order, hidden: [], solo: null }
     })
   }
-  const lookAt = (id: number) => onStateChange((previous) => ({ ...previous, solo: id, view: "compare", hidden: previous.hidden.filter((one) => one !== id) }))
+  const lookAt = (id: number) => setView("compare", id)
   const toggleShown = (id: number) => onStateChange((previous) => {
     const hidden = new Set(previous.hidden)
     // 未选中的线路可临时独看，隐藏后仍保留它自己的图例
@@ -122,6 +109,36 @@ export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, 
   useLayoutEffect(() => {
     if (view === "rows" && scroller.current) scroller.current.scrollTop = scrollTop.current
   }, [view])
+  useLayoutEffect(() => {
+    const root = scroller.current
+    if (view !== "rows" || !root) return
+    // 在恢复后的滚动位置先画出可见曲线，后续滚动再交给同一个观察器
+    const rows = root.querySelectorAll<HTMLElement>("[data-latency-row]")
+    const viewport = root.getBoundingClientRect()
+    const margin = 180
+    const visible = new Set<number>()
+    for (const row of rows) {
+      const bounds = row.getBoundingClientRect()
+      if (typeof IntersectionObserver === "undefined" || (bounds.bottom >= viewport.top - margin && bounds.top <= viewport.bottom + margin)) {
+        visible.add(Number(row.dataset.latencyRow))
+      }
+    }
+    setVisibleRows(new Set(visible))
+    if (typeof IntersectionObserver === "undefined") return
+    const observer = new IntersectionObserver((entries) => {
+      let changed = false
+      for (const entry of entries) {
+        const id = Number((entry.target as HTMLElement).dataset.latencyRow)
+        if (visible.has(id) === entry.isIntersecting) continue
+        if (entry.isIntersecting) visible.add(id)
+        else visible.delete(id)
+        changed = true
+      }
+      if (changed) setVisibleRows(new Set(visible))
+    }, { root, rootMargin: `${margin}px 0px` })
+    rows.forEach((row) => observer.observe(row))
+    return () => observer.disconnect()
+  }, [view, probes])
   useEffect(() => {
     const el = scroller.current
     if (!el || view !== "rows") return
@@ -137,42 +154,42 @@ export function LatencyCharts({ rows, probes, hours, step, smooth, connectGaps, 
   return (
     <div data-latency-charts data-latency-view={view} className="space-y-3">
       <div className="flex flex-wrap items-center gap-1">
-        <button type="button" aria-pressed={view === "rows"} onClick={() => { setView("rows"); setSolo(null) }} className={`tap tap-y-6 rounded-md px-2.5 py-1 text-xs ${view === "rows" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>分行</button>
-        <button type="button" aria-pressed={view === "compare"} disabled={legendProbes.length === 0} onClick={() => setView("compare")} className={`tap tap-y-6 rounded-md px-2.5 py-1 text-xs disabled:opacity-40 ${view === "compare" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>对比{legendProbes.length > 0 ? ` · ${compared.length}` : ""}</button>
+        <button type="button" aria-pressed={view === "rows"} onClick={() => setView("rows")} className={`tap tap-y-6 rounded-md px-2.5 py-1 text-xs motion-safe:transition-colors ${view === "rows" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>分行</button>
+        <button type="button" aria-pressed={view === "compare"} disabled={legendProbes.length === 0} onClick={() => setView("compare")} className={`tap tap-y-6 rounded-md px-2.5 py-1 text-xs motion-safe:transition-colors disabled:opacity-40 ${view === "compare" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>对比{legendProbes.length > 0 ? ` · ${compared.length}` : ""}</button>
         {view === "rows" && probes.length > 0 && probes.length <= COMPARE_LIMIT && <button type="button" data-probe-select-all className="tap tap-y-6 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground" onClick={selectAll}>{selected.length === probes.length ? "取消全选" : "全选"}</button>}
         <ProbePicker probes={probes} selected={selected} limit={COMPARE_LIMIT} onToggle={toggle} onClear={clearSelection} onAll={selectAll} />
         {selected.length > 0 && <button type="button" className="tap tap-y-6 text-xs text-muted-foreground hover:text-foreground" onClick={clearSelection}>清除选择</button>}
       </div>
       {view === "rows" ? (
-        <div ref={scroller} data-latency-scroll data-more={more ? "" : undefined} tabIndex={0} role="group" aria-label="延迟线路" onScroll={(e) => { scrollTop.current = e.currentTarget.scrollTop }} className="max-h-[min(36rem,70dvh)] overflow-y-auto pr-1 focus-visible:outline-2 focus-visible:outline-ring [scrollbar-gutter:stable]">
+        <div ref={scroller} data-latency-scroll data-more={more ? "" : undefined} tabIndex={0} role="group" aria-label="延迟线路" className="max-h-[min(36rem,70dvh)] overflow-y-auto pr-1 focus-visible:outline-2 focus-visible:outline-ring [scrollbar-gutter:stable]">
           <div className="space-y-3">
-          {probes.map((probe) => {
-            const last = latest.get(probe.id)
-            const value = last?.latency
-            const chosen = selected.includes(probe.id)
-            return (
-              <div key={probe.id} data-latency-row={probe.id} className={`rounded-lg corner-squircle border p-3 ${chosen ? "border-ring bg-muted/20" : ""}`}>
-                <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <label className="tap tap-y-15 shrink-0 cursor-pointer">
-                    <input type="checkbox" data-probe-select={probe.id} aria-label={`对比：${probe.name}`} checked={chosen} disabled={!chosen && selected.length >= COMPARE_LIMIT} title={!chosen && selected.length >= COMPARE_LIMIT ? "最多对比六条线路" : probe.name} onChange={() => toggle(probe.id)} className="accent-foreground" />
-                  </label>
-                    <ProbeLegendButton row id={probe.id} name={probe.name} stroke="var(--chart-1)" loss={probe.loss} shown highlighted={false} onToggle={() => toggle(probe.id)} onSolo={() => lookAt(probe.id)} onHighlight={() => undefined} />
+            {probes.map((probe) => {
+              const last = latest.get(probe.id)
+              const value = last?.latency
+              const chosen = selected.includes(probe.id)
+              return (
+                <div key={probe.id} data-latency-row={probe.id} className={`rounded-lg corner-squircle border p-3 ${chosen ? "border-ring bg-muted/20" : ""}`}>
+                  <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <label className="tap tap-y-15 shrink-0 cursor-pointer">
+                        <input type="checkbox" data-probe-select={probe.id} aria-label={`对比：${probe.name}`} checked={chosen} disabled={!chosen && selected.length >= COMPARE_LIMIT} title={!chosen && selected.length >= COMPARE_LIMIT ? "最多对比六条线路" : probe.name} onChange={() => toggle(probe.id)} className="accent-foreground" />
+                      </label>
+                      <ProbeLegendButton row id={probe.id} name={probe.name} stroke="var(--chart-1)" loss={probe.loss} shown highlighted={false} onToggle={() => toggle(probe.id)} onSolo={() => lookAt(probe.id)} onHighlight={() => undefined} />
+                    </div>
+                    <div className="tnum flex w-full shrink-0 items-center gap-3 pl-6 text-xs text-muted-foreground sm:w-auto sm:pl-0">
+                      <span data-probe-latest title={last ? `最近样本：${new Date(last.ts * 1_000).toLocaleString("zh-CN")}` : undefined} className="font-medium text-foreground">{typeof value === "number" && Number.isFinite(value) ? milliseconds(value) : last ? "无响应" : "无数据"}</span>
+                      <span data-probe-loss>丢包 {lossLabel(probe.loss)}</span>
+                    </div>
                   </div>
-                  <div className="tnum flex w-full shrink-0 items-center gap-3 pl-6 text-xs text-muted-foreground sm:w-auto sm:pl-0">
-                    <span data-probe-latest title={last ? `最近样本：${new Date(last.ts * 1_000).toLocaleString("zh-CN")}` : undefined} className="font-medium text-foreground">{typeof value === "number" && Number.isFinite(value) ? milliseconds(value) : last ? "无响应" : "无数据"}</span>
-                    <span data-probe-loss>丢包 {lossLabel(probe.loss)}</span>
+                  <div className="h-28 w-full text-muted-foreground">
+                    {visibleRows.has(probe.id) && <TimeChart {...lineOptions} left={axisLeft} onAxisLeftChange={shareAxis} series={[
+                      { key: bandKey(probe.id), name: probe.name, color: "var(--chart-1)", band: true },
+                      { key: lineKey(probe.id), name: probe.name, color: "var(--chart-1)" },
+                    ]} label={`${probe.name}延迟走势`} renderTooltip={(row) => <PingTooltip active label={row.ts} rowByTs={rowByTs} probes={[probe]} smooth={smooth} style={singleStyle} />} />}
                   </div>
                 </div>
-                <DeferredChart root={scroller}>
-                  <TimeChart {...lineOptions} left={axisLeft} onAxisLeftChange={shareAxis} series={[
-                    { key: bandKey(probe.id), name: probe.name, color: "var(--chart-1)", band: true },
-                    { key: lineKey(probe.id), name: probe.name, color: "var(--chart-1)" },
-                  ]} label={`${probe.name}延迟走势`} renderTooltip={(row) => <PingTooltip active label={row.ts} rowByTs={rowByTs} probes={[probe]} smooth={smooth} style={singleStyle} />} />
-                </DeferredChart>
-              </div>
-            )
-          })}
+              )
+            })}
           </div>
         </div>
       ) : (

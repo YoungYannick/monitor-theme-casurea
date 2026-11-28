@@ -16,6 +16,7 @@ import { hasDetailRemarks, remarkChips } from "@/lib/notes"
 import { latencyLineOptions, latencyStyleFromOptions, remarksOnCards, type RemarkPlacement } from "@/lib/site-settings"
 import { useLatencyStyle } from "@/lib/theme-config"
 import { rangesFor } from "@/lib/ranges"
+import { useContentTransition } from "@/lib/use-content-transition"
 import { timeRangeIndices, withHistorySlot } from "@/lib/history"
 import { countAxisTop, resourceHistory, type MetricPoint } from "@/lib/resource-history"
 
@@ -31,6 +32,7 @@ type PingPoint = {
 type Probes = Record<string, string>
 /** 整窗丢包率（hub 按次数算好下发，桶里的 `loss` 已是百分比、没法在这边再平均） */
 type Loss = Record<string, number>
+type HistoryData = { metrics: Point[]; ping: PingPoint[]; probes: Probes; loss?: Loss; step?: number }
 
 // 时间范围那排按钮由 hub 的保留天数生成（见 @/lib/ranges）
 const TABS = [
@@ -57,6 +59,7 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
       className={`tap tap-y-6 rounded-md px-2.5 py-1 text-xs transition-colors ${
         active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
       }`}
@@ -148,7 +151,14 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
   const { style: latencyStyle, siteDefault, onChange: chooseLatencyStyle } = useLatencyStyle()
   const { connectGaps, smooth: smoothLines } = latencyLineOptions(latencyStyle)
   const [latencySelection, setLatencySelection] = useState<LatencyChartSelection>({ view: "rows", ids: [], solo: null, hidden: [] })
-  const [data, setData] = useState<{ metrics: Point[]; ping: PingPoint[]; probes: Probes; loss?: Loss; step?: number } | null>(null)
+  const [history, setHistory] = useState<{ nodeId: number; tab: typeof tab; hours: number; data: HistoryData } | null>(null)
+  const displayed = history?.nodeId === node.id && history.tab === tab ? history : null
+  const data = displayed?.data
+  const waiting = !isLive && displayed?.hours !== hours
+  const drawLive = isLive || (waiting && !data && tab === "resources" && liveRows.length > 0)
+  const drawHours = drawLive ? 1 : displayed?.hours ?? hours
+  const charts = useContentTransition<HTMLDivElement>(`${node.id}-${tab}-${drawLive ? "live" : displayed?.hours ?? "loading"}`)
+  const [lastHeight, setLastHeight] = useState(0)
   // 请求被拒（hub 限制并发历史窗口会答 503）与空窗口是两回事，分开记
   const [failed, setFailed] = useState("")
   const [updatedAt, setUpdatedAt] = useState(0)
@@ -165,9 +175,6 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
     let hadData = false
     let attemptedAt = 0
     let controller: AbortController | null = null
-    // 新窗口在途时先清掉旧图
-    // oxlint-disable-next-line react/set-state-in-effect
-    setData(null)
     // oxlint-disable-next-line react/set-state-in-effect
     setZoom(null)
     // oxlint-disable-next-line react/set-state-in-effect
@@ -187,7 +194,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
       const request = new AbortController()
       controller = request
       withHistorySlot(
-        () => api<{ metrics: Point[]; ping: PingPoint[]; probes: Probes; loss?: Loss; step?: number }>(
+        () => api<HistoryData>(
           `/nodes/${node.id}/metrics?hours=${hours}&points=${points}&series=${series}`,
           { signal: request.signal },
         ),
@@ -196,14 +203,14 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
         .then((next) => {
           if (!active || request.signal.aborted) return
           hadData = true
-          setData(next)
+          setHistory({ nodeId: node.id, tab, hours, data: next })
           setUpdatedAt(Date.now())
           setFailed("")
         })
         .catch((e: Error) => {
           if (!active || request.signal.aborted) return
           setFailed(e.message || "网络错误")
-          if (!hadData) setData({ metrics: [], ping: [], probes: {} })
+          if (!hadData) setHistory({ nodeId: node.id, tab, hours, data: { metrics: [], ping: [], probes: {} } })
         })
         .finally(() => {
           busy = false
@@ -300,10 +307,10 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
 
   // 时间转换与新历史字段的有效性判断共用一次遍历，旧 Hub 的缺字段保留为断点
   const { rows: metricRows, available, peaks } = useMemo(
-    () => resourceHistory(isLive ? liveRows : data?.metrics ?? []),
-    [isLive, liveRows, data],
+    () => resourceHistory(drawLive ? liveRows : data?.metrics ?? []),
+    [drawLive, liveRows, data],
   )
-  const stepMs = isLive ? LIVE_GAP_MS : typeof data?.step === "number" ? data.step * 1_000 : undefined
+  const stepMs = drawLive ? LIVE_GAP_MS : typeof data?.step === "number" ? data.step * 1_000 : undefined
   const missingHistory = [
     !available.swap_used && "Swap",
     !available.tcp && "TCP",
@@ -397,7 +404,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
         <TimeChart
           rows={metricRows}
           series={[{ key: "cpu", name: "CPU", color: "var(--chart-1)", area: true }]}
-          hours={hours}
+          hours={drawHours}
           step={stepMs}
           top={tops.cpu}
           unit="%"
@@ -418,7 +425,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
             { key: "mem_used", name: "内存", color: "var(--chart-2)", area: true },
             ...(available.swap_used ? [{ key: "swap_used", name: "Swap", color: "var(--chart-5)" }] : []),
           ]}
-          hours={hours}
+          hours={drawHours}
           step={stepMs}
           top={tops.memory}
           yFormat={axisBytes}
@@ -436,7 +443,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
             { key: "net_rx", name: "下行", color: "var(--chart-5)" },
             { key: "net_tx", name: "上行", color: "var(--chart-1)" },
           ]}
-          hours={hours}
+          hours={drawHours}
           step={stepMs}
           top={tops.rate}
           unit="/s"
@@ -451,7 +458,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
         <TimeChart
           rows={metricRows}
           series={[{ key: "disk_used", name: "硬盘", color: "var(--chart-2)", area: true }]}
-          hours={hours}
+          hours={drawHours}
           step={stepMs}
           top={tops.disk > node.disk_total ? axisTop(tops.disk, 1024, 1024) : node.disk_total}
           yFormat={axisBytes}
@@ -469,7 +476,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
               ...(available.tcp ? [{ key: "tcp", name: "TCP", color: "var(--chart-1)" }] : []),
               ...(available.udp ? [{ key: "udp", name: "UDP", color: "var(--chart-4)" }] : []),
             ]}
-            hours={hours}
+            hours={drawHours}
             step={stepMs}
             top={tops.connections}
             yFormat={String}
@@ -485,7 +492,7 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
           <TimeChart
             rows={metricRows}
             series={[{ key: "procs", name: "进程", color: "var(--chart-3)", area: true }]}
-            hours={hours}
+            hours={drawHours}
             step={stepMs}
             top={tops.procs}
             yFormat={String}
@@ -544,7 +551,10 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
         {!embedded && (
         <div className="flex gap-1">
           {TABS.map((t) => (
-            <Tab key={t.key} active={tab === t.key} onClick={() => setTab(t.key)}>
+            <Tab key={t.key} active={tab === t.key} onClick={() => {
+              setLastHeight(charts.current?.offsetHeight ?? 0)
+              setTab(t.key)
+            }}>
               {t.label}
             </Tab>
           ))}
@@ -653,10 +663,12 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
             </span>
           )}
         </div>
-        {(updatedAt > 0 || refreshing) && (
+        {(updatedAt > 0 || refreshing || waiting) && (
           <p className="text-[11px] text-muted-foreground" role="status">
-            {updatedAt > 0 && <span title={new Date(updatedAt).toLocaleString("zh-CN")}>{isLive ? "实时更新于" : "历史更新于"} {new Date(updatedAt).toLocaleTimeString("zh-CN")}</span>}
-            {refreshing && <span>{updatedAt > 0 ? " · " : ""}刷新中…</span>}
+            {waiting ? "正在加载所选时间范围…" : <>
+              {updatedAt > 0 && <span title={new Date(updatedAt).toLocaleString("zh-CN")}>{isLive ? "实时更新于" : "历史更新于"} {new Date(updatedAt).toLocaleTimeString("zh-CN")}</span>}
+              {!isLive && refreshing && <span>{updatedAt > 0 ? " · " : ""}刷新中…</span>}
+            </>}
           </p>
         )}
         {failed && updatedAt > 0 && (
@@ -666,46 +678,52 @@ export function NodeDetail({ node, embedded = false, onOpenDetail, historyDays, 
         )}
       </div>
 
-      {tab === "latency" ? (
-        !data ? (
-          <Skeleton className="h-40 w-full" />
-        ) : failed && updatedAt === 0 ? (
-          <p className="py-8 text-center text-sm text-destructive" role="alert">读取历史数据失败：{failed} <button className="underline" onClick={() => reload.current()}>重试</button></p>
-        ) : pingSeries.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">这段时间没有延迟数据</p>
-        ) : (
-          <LatencyCharts
-            state={latencySelection}
-            onStateChange={setLatencySelection}
-            rows={pingRows}
-            probes={pingSeries}
-            hours={hours}
-            step={stepMs}
-            smooth={smooth}
-            connectGaps={connectGaps}
-            smoothLines={smoothLines}
-            from={zoomIndices?.[0] ?? 0}
-            to={zoomIndices?.[1] ?? pingRows.length - 1}
-            onZoom={(from, to) => setZoom(from === 0 && to === pingRows.length - 1 ? null : [pingRows[from].ts, pingRows[to].ts])}
-          />
-        )
-      ) : isLive ? (
-        liveRows.length === 0 && !liveSeeded ? (
-          <Skeleton className="h-40 w-full" />
-        ) : metricRows.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">暂无实时数据</p>
-        ) : (
-          resourceCharts
-        )
-      ) : !data ? (
-        <Skeleton className="h-40 w-full" />
-      ) : failed && updatedAt === 0 ? (
-        <p className="py-8 text-center text-sm text-destructive" role="alert">读取历史数据失败：{failed} <button className="underline" onClick={() => reload.current()}>重试</button></p>
-      ) : metricRows.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">这段时间没有历史数据</p>
-      ) : (
-        resourceCharts
-      )}
+      <div className={embedded ? "compact-chart-reveal" : undefined} data-ready={embedded ? !!data : undefined}>
+        <div ref={charts} data-chart-window="" aria-busy={waiting} inert={waiting}
+          className="motion-safe:transition-opacity aria-busy:opacity-55"
+          style={waiting && !data && !drawLive ? { minHeight: lastHeight } : undefined}>
+          {tab === "latency" ? (
+            !data ? (
+              embedded ? null : <Skeleton className="h-40 w-full" />
+            ) : failed && updatedAt === 0 ? (
+              <p className="py-8 text-center text-sm text-destructive" role="alert">读取历史数据失败：{failed} <button className="underline" onClick={() => reload.current()}>重试</button></p>
+            ) : pingSeries.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">这段时间没有延迟数据</p>
+            ) : (
+              <LatencyCharts
+                state={latencySelection}
+                onStateChange={setLatencySelection}
+                rows={pingRows}
+                probes={pingSeries}
+                hours={drawHours}
+                step={stepMs}
+                smooth={smooth}
+                connectGaps={connectGaps}
+                smoothLines={smoothLines}
+                from={zoomIndices?.[0] ?? 0}
+                to={zoomIndices?.[1] ?? pingRows.length - 1}
+                onZoom={(from, to) => setZoom(from === 0 && to === pingRows.length - 1 ? null : [pingRows[from].ts, pingRows[to].ts])}
+              />
+            )
+          ) : drawLive ? (
+            liveRows.length === 0 && !liveSeeded ? (
+              <Skeleton className="h-40 w-full" />
+            ) : metricRows.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">暂无实时数据</p>
+            ) : (
+              resourceCharts
+            )
+          ) : !data ? (
+            <Skeleton className="h-40 w-full" />
+          ) : failed && updatedAt === 0 ? (
+            <p className="py-8 text-center text-sm text-destructive" role="alert">读取历史数据失败：{failed} <button className="underline" onClick={() => reload.current()}>重试</button></p>
+          ) : metricRows.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">这段时间没有历史数据</p>
+          ) : (
+            resourceCharts
+          )}
+        </div>
+      </div>
     </div>
   )
 }

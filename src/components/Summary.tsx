@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card"
 import { DetailScroll } from "@/components/DetailScroll"
 import { TrafficDetail } from "@/components/TrafficDetail"
 import { InfoTooltip } from "@/components/InfoTooltip"
+import { useAnimatedPresence } from "@/lib/use-animated-presence"
 import type { Node } from "@/lib/api"
 import { bytes, daysUntil, rate } from "@/lib/format"
 import { budgetOf, cny, fxNote, isExcludedByTag, parseRateOverrides, type BudgetItem } from "@/lib/money"
@@ -51,6 +52,7 @@ function Block({ title, hint, detail, onOpen, children }: {
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
+  const { ref: detailRef, present } = useAnimatedPresence<HTMLSpanElement>(open)
   const ref = useRef<HTMLDivElement | null>(null)
   const interactive = onOpen !== undefined || detail !== undefined
   const [placement, setPlacement] = useState({ above: false, left: 0, maxHeight: 320 })
@@ -78,7 +80,7 @@ function Block({ title, hint, detail, onOpen, children }: {
     if (!open) return
     const onDown = (e: PointerEvent) => {
       const el = e.target
-      if (!(el instanceof HTMLElement) || !ref.current?.contains(el)) setOpen(false)
+      if (!(el instanceof globalThis.Node) || !ref.current?.contains(el)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false) }
     document.addEventListener("pointerdown", onDown)
@@ -86,39 +88,40 @@ function Block({ title, hint, detail, onOpen, children }: {
     return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey) }
   }, [open])
   return (
-    <InfoTooltip text={onOpen ? "点击进入账单页，看逐台的月均与剩余价值明细" : detail ? undefined : hint}>
-      <div
-        ref={ref}
-        className={`relative flex min-w-0 flex-col${interactive ? " cursor-pointer rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" : ""}`}
-        tabIndex={interactive ? 0 : undefined}
-        role={interactive ? "button" : undefined}
-        aria-expanded={detail ? open : undefined}
-        onPointerEnter={detail ? (e) => { if (e.pointerType === "mouse") setOpen(true) } : undefined}
-        onPointerLeave={detail ? (e) => { if (e.pointerType === "mouse") setOpen(false) } : undefined}
-        onFocus={detail ? () => setOpen(true) : undefined}
-        onBlur={detail ? (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false) } : undefined}
-        onClick={onOpen ?? (detail ? () => setOpen(true) : undefined)}
-        onKeyDown={interactive ? (e) => {
-          if (e.target !== e.currentTarget) return
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault()
-            if (onOpen) onOpen()
-            else setOpen((current) => !current)
-          }
-        } : undefined}
-      >
-        <div className="truncate text-xs text-muted-foreground">{title}</div>
-        {children}
-        {detail !== undefined && open && (
-          // 浮层紧贴块底（不留 mt 空隙）：指针从块移进浮层的路上才不会触发 pointerleave 闪关；
-          // 上限高 + 内部滚动写在 index.css 的 .budget-detail 里——近百行明细也在这一个
-          // 浮层里滚着看，不会把浮层拖出屏幕
-          <span data-budget-detail="" style={{ left: placement.left, top: placement.above ? undefined : "100%", bottom: placement.above ? "100%" : undefined, maxHeight: placement.maxHeight }} className="budget-detail absolute z-20 flex w-max max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-md border bg-popover text-xs shadow-md">
-            {detail}
-          </span>
-        )}
-      </div>
-    </InfoTooltip>
+    <div ref={ref} className="relative flex min-w-0 flex-col"
+      onPointerEnter={detail ? (e) => { if (e.pointerType === "mouse") setOpen(true) } : undefined}
+      onPointerLeave={detail ? (e) => { if (e.pointerType === "mouse") setOpen(false) } : undefined}
+      onBlur={detail ? (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false) } : undefined}>
+      <InfoTooltip text={onOpen ? "点击进入账单页，看逐台的月均与剩余价值明细" : detail ? undefined : hint}>
+        <div
+          className={`flex min-w-0 flex-1 flex-col${interactive ? " cursor-pointer rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" : ""}`}
+          tabIndex={interactive ? 0 : undefined}
+          role={interactive ? "button" : undefined}
+          aria-expanded={detail ? open : undefined}
+          onFocus={detail ? () => setOpen(true) : undefined}
+          onClick={onOpen ?? (detail ? () => setOpen(true) : undefined)}
+          onKeyDown={interactive ? (e) => {
+            if (e.target !== e.currentTarget) return
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault()
+              if (onOpen) onOpen()
+              else setOpen((current) => !current)
+            }
+          } : undefined}
+        >
+          <div className="truncate text-xs text-muted-foreground">{title}</div>
+          {children}
+        </div>
+      </InfoTooltip>
+      {detail !== undefined && present && (
+        // 浮层紧贴块底（不留 mt 空隙）：指针从块移进浮层的路上才不会触发 pointerleave 闪关；
+        // 上限高 + 内部滚动写在 index.css 的 .budget-detail 里——近百行明细也在这一个
+        // 浮层里滚着看，不会把浮层拖出屏幕
+        <span ref={detailRef} data-budget-detail="" data-above={placement.above} data-state={open ? "open" : "closed"} inert={!open} style={{ left: placement.left, top: placement.above ? undefined : "100%", bottom: placement.above ? "100%" : undefined, maxHeight: placement.maxHeight }} className="budget-detail absolute z-20 flex w-max max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-md border bg-popover text-xs shadow-md">
+          {detail}
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -386,7 +389,7 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
     <Tooltip.Provider delayDuration={300}>
       {/* 版式：手机起就两列、`lg` 起四列——一行两个省垂直空间（站长要求）；手机上卡片内部并排的
           读数改竖排、主数字降一档（Big 缩号与 `truncate` 仍兜底），不再把手机压成一列 */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="summary-grid grid grid-cols-2 gap-3 lg:grid-cols-4">
       {finance ? (
         <>
           {/* 第一张卡：剩余总价值 + 月均总支出 两个数使用同一份汇率折成人民币后相加，

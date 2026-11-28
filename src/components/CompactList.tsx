@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, ChevronRight } from "lucide-react"
 import { Country, deployed, monthUsage } from "@/components/NodeCard"
 import { DetailLoader } from "@/components/DetailLoader"
 import { TextHighlight } from "@/components/TextHighlight"
-import { Skeleton } from "@/components/ui/skeleton"
+import { useAnimatedPresence } from "@/lib/use-animated-presence"
 import type { Node } from "@/lib/api"
 import type { RemarkPlacement } from "@/lib/site-settings"
 import { FOREVER, cycleLabel, bytes, daysUntil, money, osName, pair, percent, rate } from "@/lib/format"
@@ -118,30 +118,36 @@ function useSpan(): number {
 }
 
 /** 展开行里那块：整页详情的延迟图就地渲染；从没接入的机器没有历史可画，写一句话带过 */
-function Expanded({ node, span, onOpenDetail, onClose, historyDays, remarkPlacement }: { node: Node; span: number; onOpenDetail: () => void; onClose: () => void; historyDays?: number; remarkPlacement?: RemarkPlacement }) {
+function Expanded({ open, node, span, onOpenDetail, onClose, historyDays, remarkPlacement }: { open: boolean; node: Node; span: number; onOpenDetail: () => void; onClose: () => void; historyDays?: number; remarkPlacement?: RemarkPlacement }) {
+  const { ref, present } = useAnimatedPresence<HTMLDivElement>(open)
+  if (!present) return null
   return (
-    <tr className="bg-muted/30">
+    <tr className="bg-muted/30" inert={!open}>
       {/* 展开行要跨满当前看得见的列数：colSpan 得跟着断点走（见 useSpan），写死一个数会
           在窄屏上把表格撑出多余的列 */}
       <td colSpan={span} className="p-0">
-        <div className="border-t border-border/60 px-4 py-3">
-          {deployed(node) ? (
-            <Suspense fallback={<Skeleton className="h-72" />}>
-              <DetailLoader node={node} embedded onOpenDetail={onOpenDetail} historyDays={historyDays} remarkPlacement={remarkPlacement} onLoadFailureBack={onClose} />
-            </Suspense>
-          ) : (
-            <p className="py-6 text-center text-sm text-muted-foreground">还没有接入 在后台生成安装命令并执行一次</p>
-          )}
+        <div ref={ref} className="compact-detail-fold" data-open={open}>
+          <div className="min-h-0 overflow-clip">
+            <div className="border-t border-border/60 px-4 py-3">
+              {deployed(node) ? (
+                <Suspense fallback={<p role="status" className="text-xs text-muted-foreground">正在加载延迟数据…</p>}>
+                  <DetailLoader node={node} embedded onOpenDetail={onOpenDetail} historyDays={historyDays} remarkPlacement={remarkPlacement} onLoadFailureBack={onClose} />
+                </Suspense>
+              ) : (
+                <p className="py-6 text-center text-sm text-muted-foreground">还没有接入 在后台生成安装命令并执行一次</p>
+              )}
+            </div>
+          </div>
         </div>
       </td>
     </tr>
   )
 }
 
-function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, remarkPlacement, terms, selected }: {
+function Row({ node, span, disclosure, onToggle, onOpenDetail, onWarm, historyDays, remarkPlacement, terms, selected }: {
   node: Node
   span: number
-  open: boolean
+  disclosure: "open" | "closed" | null
   onToggle: () => void
   onOpenDetail: () => void
   /** 摸到这一行就先取详情那块 chunk（与卡片同一个回调，见 App 的 warmDetail） */
@@ -156,6 +162,7 @@ function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, re
   selected?: boolean
 }) {
   const m = node.metrics
+  const open = disclosure === "open"
   // CPU 是 hub 直接给的百分比；内存、硬盘、流量都要自己按 used/total 算 流量按套餐口径
   // （monthUsage，与经典/延迟档同一套），没有上限就是没有上限：文本写 ∞、条留空
   const cpu = m ? m.cpu : null
@@ -185,7 +192,7 @@ function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, re
             折角 → 国旗 → 名字：折角是「点得进去」的提示，展开时转成朝下；搜索命中片段描色 */}
         <td className="px-3 py-2 align-middle">
           <button type="button" aria-expanded={open} aria-label={`${open ? "收起" : "展开"}${node.name}的延迟图`} className="flex w-full min-w-0 items-center gap-2 rounded-sm text-left focus-visible:outline-2 focus-visible:outline-ring">
-            <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground/60 transition-transform ${open ? "rotate-90" : ""}`} />
+            <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground/60 motion-safe:transition-transform ${open ? "rotate-90" : ""}`} />
             <Country node={node} />
             <span className="truncate text-sm font-medium"><TextHighlight text={node.name} terms={terms} /></span>
           </button>
@@ -233,7 +240,7 @@ function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, re
           <Bar pct={traffic} />
         </td>
       </tr>
-      {open && <Expanded node={node} span={span} onOpenDetail={onOpenDetail} onClose={onToggle} historyDays={historyDays} remarkPlacement={remarkPlacement} />}
+      {disclosure !== null && <Expanded open={open} node={node} span={span} onOpenDetail={onOpenDetail} onClose={onToggle} historyDays={historyDays} remarkPlacement={remarkPlacement} />}
     </>
   )
 }
@@ -242,7 +249,7 @@ function Row({ node, span, open, onToggle, onOpenDetail, onWarm, historyDays, re
 export function CompactList({ nodes, onOpen, onWarm, historyDays, remarkPlacement, terms, cursorId }: { nodes: Node[]; onOpen: (id: number) => void; onWarm?: () => void; historyDays?: number; remarkPlacement?: RemarkPlacement; terms?: string[]; cursorId?: number | null }) {
   const span = useSpan()
   // 一次只摊开一行：表格本来就密，同时摊开两块会把上下文冲散
-  const [open, setOpen] = useState<number | null>(null)
+  const [detail, setDetail] = useState<{ id: number; open: boolean } | null>(null)
 
   return (
     <div data-card-style="compact" className="overflow-hidden rounded-xl corner-squircle border bg-card text-card-foreground shadow-sm">
@@ -268,8 +275,8 @@ export function CompactList({ nodes, onOpen, onWarm, historyDays, remarkPlacemen
               key={n.id}
               node={n}
               span={span}
-              open={open === n.id}
-              onToggle={() => setOpen((cur) => (cur === n.id ? null : n.id))}
+              disclosure={detail?.id === n.id ? (detail.open ? "open" : "closed") : null}
+              onToggle={() => setDetail((cur) => ({ id: n.id, open: cur?.id !== n.id || !cur.open }))}
               onOpenDetail={() => onOpen(n.id)}
               onWarm={onWarm}
               historyDays={historyDays}
