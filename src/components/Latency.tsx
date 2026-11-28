@@ -174,45 +174,77 @@ function Sparkline({ points, probeId, className, step }: { points: PingPoint[]; 
   )
 }
 
-/**
- * 卡面与浮层共用的一份行选择：站长在后台「三网延迟」里填了名字就按名字取、按填写的顺序，
- * 留空则按后台顺序自动取前三条；两处都卡在三条以内
- * 匹配用的是 ping 任务的名字，改过名、删过任务的那一行自然落空、不占位——三条的上限
- * 卡在**真正渲染出来的行**上，所以先按名字取、再截断（反过来写的话，填写清单里
- * 前三个名字有一个对不上，访客就只看到两行）
- */
-function pickRows(probes: Probe[] | null, lines: string): Probe[] {
+type DisplayRow = { rule: string; probe?: Probe; hasRecords?: boolean }
+
+/** 每个配置行保留一个位置 任务可选时按书写顺序取，超时也算有上报 */
+function pickRows(probes: Probe[] | null, lines: string): DisplayRow[] {
   const all = probes ?? []
-  const wanted = [...new Set(lines.split("\n").map((s) => s.trim()).filter(Boolean))]
-  if (wanted.length === 0) return all.slice(0, 3)
+  const rules = [...new Set(lines.split("\n").map((line) => line.trim()).filter(Boolean))]
+  if (rules.length === 0) return all.slice(0, 3).map((probe) => ({ rule: String(probe.id), probe }))
   const byName = new Map<string, Probe>()
   for (const p of all) if (!byName.has(p.name)) byName.set(p.name, p)
-  return wanted
-    .map((name) => byName.get(name))
-    .filter((p): p is Probe => p !== undefined)
-    .slice(0, 3)
+  type ChoiceRow = DisplayRow & { candidates: Probe[] }
+  const rows: ChoiceRow[] = []
+  const owners = new Map<Probe, ChoiceRow>()
+  for (const rule of rules) {
+    // 单独点名的任务优先占自己的行，也兼容原本就含竖线的任务名
+    const exact = byName.get(rule)
+    const names = exact ? [rule] : rule.split("|").map((name) => name.trim()).filter(Boolean)
+    if (!names.length) continue
+    const candidates = names.map((name) => byName.get(name)).filter((probe) => probe !== undefined)
+    const row = { rule, candidates, hasRecords: candidates.length > 0, probe: exact }
+    rows.push(row)
+    if (exact) owners.set(exact, row)
+  }
+
+  function assign(row: ChoiceRow, visited: Set<ChoiceRow>): boolean {
+    if (visited.has(row)) return false
+    visited.add(row)
+    // 候选重叠时先用空闲线路；若都被占用，尝试让已分配的行改用自己的备选
+    const probe = row.candidates.find((p) => !owners.has(p))
+      ?? row.candidates.find((p) => {
+        const owner = owners.get(p)
+        return owner !== undefined && assign(owner, visited)
+      })
+    if (!probe) return false
+    owners.set(probe, row)
+    row.probe = probe
+    return true
+  }
+  for (const row of rows) if (!row.probe) assign(row, new Set())
+  return rows
 }
 
 const sampleClock = clockFor(168)
 
 /** 卡面与浮层使用同一读数：最新桶超时就显示超时，旧桶明确附上样本时间 */
-function ProbeRow({ probe, now, compact = false }: { probe: Probe; now: number; compact?: boolean }) {
-  const { sample, stale } = latestPing(probe.points, now)
+function ProbeRow({ row, now, compact, emptyMessage, failed }: { row: DisplayRow; now: number; compact: boolean; emptyMessage: string; failed: string }) {
+  const { probe } = row
+  const { sample, stale } = latestPing(probe?.points ?? [], now)
   const ms = sample?.latency ?? null
-  const gray = toneClass(toneOf(ms, probe.loss))
+  const gray = toneClass(toneOf(ms, probe?.loss ?? 0))
+  const latencyText = !probe ? "—" : ms === null ? "超时" : `${ms} ms`
+  const lossText = probe ? `${(probe.loss > 0 ? probe.loss : 0).toFixed(1)}%` : "—"
+  const sampleInfo = sample ? `样本时间：${new Date(sample.ts * 1_000).toLocaleString("zh-CN")}`
+    : row.hasRecords ? "可用线路已在其他行显示" : emptyMessage
+  const status = failed ? `延迟刷新失败：${failed}` : sample && stale ? `数据陈旧 · ${sampleClock(sample.ts * 1_000)}` : ""
   return (
-    <span className="block text-xs" title={sample ? `样本时间：${new Date(sample.ts * 1_000).toLocaleString("zh-CN")}` : "没有样本"}>
-      <span className="flex items-center gap-2">
-        <span className={`${compact ? "w-14" : "w-16"} shrink-0 truncate text-muted-foreground`}>{probe.name}</span>
+    <span className="block text-xs" title={[probe?.name, sampleInfo, status].filter(Boolean).join(" · ")}>
+      <span className="flex h-4 items-center gap-2">
+        <span className={`${compact ? "w-14" : "w-16"} shrink-0 truncate text-muted-foreground`}>{probe?.name ?? "—"}</span>
         <span className={`tnum ${compact ? "w-12" : "w-14"} shrink-0 text-right font-medium ${gray}`}>
-          {ms === null ? "超时" : `${ms} ms`}
+          {latencyText}
         </span>
-        <Sparkline points={probe.points} probeId={probe.id} className={gray} step={probe.step} />
+        <span className="flex min-w-0 flex-1 items-center gap-1">
+          {probe
+            ? <Sparkline points={probe.points} probeId={probe.id} className={gray} step={probe.step} />
+            : <span aria-hidden="true" className="flex-1 border-t border-dashed border-muted-foreground/50" />}
+          {status && <span role={failed ? "status" : undefined} className={`min-w-0 truncate text-[10px] ${failed ? "text-destructive" : "text-muted-foreground"}`}>{status}</span>}
+        </span>
         <span className={`tnum ${compact ? "w-9" : "w-10"} shrink-0 text-right text-muted-foreground`}>
-          {probe.loss > 0 ? `${probe.loss.toFixed(1)}%` : "0.0%"}
+          {lossText}
         </span>
       </span>
-      {stale && <span className="mt-0.5 block text-right text-[10px] text-muted-foreground">数据陈旧{sample ? ` · ${sampleClock(sample.ts * 1_000)}` : ""}</span>}
     </span>
   )
 }
@@ -222,39 +254,17 @@ function ProbeRow({ probe, now, compact = false }: { probe: Probe; now: number; 
  * 数据来自 hub 的 ping 历史（同详情页的延迟图），线路名用的是站长给 ping 任务起的名字
  * 显示哪几条由后台「三网延迟」指定（见 pickRows）；数据每 60 秒刷新一次（后台时停）
  */
-export function LatencyPanel({ node, lines }: { node: Node; lines: string }) {
+export function LatencyPanel({ node, lines, compact = false }: { node: Node; lines: string; compact?: boolean }) {
   const { probes, failed, now } = useNodePing(node.id)
   const rows = useMemo(() => pickRows(probes, lines), [probes, lines])
   if (rows.length === 0 && !failed) return null
+  const Panel = compact ? "span" : "div"
+  const emptyMessage = probes !== null ? "暂无探测记录" : failed ? "未取得延迟数据" : "正在加载延迟数据"
   return (
-    // `data-latency` 是给护栏认「这一档摊没摊三网延迟」的锚点（`data-net` 同一套做法：
-    // 按类名找会在改版后失配，而失配的表现是"看着没坏"）
-    <div data-latency="" className="mt-4 space-y-1.5 border-t pt-4">
-      {rows.map((p) => <ProbeRow key={p.id} probe={p} now={now} />)}
-      {failed && <span className="block text-xs text-destructive" role="status">延迟刷新失败：{failed}</span>}
-    </div>
-  )
-}
-
-/**
- * 经典档浮层底部那三网延迟：与「延迟」档卡面同一套（同一个 `useNodePing`、同一套灰阶）
- *
- * 两条口径：
- * ① **只有浮层打开时才会挂载**（调用处写在 `peekOpen` 里）⇒ 经典档默认一个 ping 请求都不发，
- *    点开哪台才取哪台；没有数据就整块不渲染（连分隔线一起没有）
- * ② 行选择与卡面共用 `pickRows`
- *
- * 自带顶部分隔线（`border-t`）：它排在「到期」下面，靠这条线把「计费那几行」与
- * 「现在通不通」分开
- */
-export function PeekLatency({ node, lines }: { node: Node; lines: string }) {
-  const { probes, failed, now } = useNodePing(node.id)
-  const rows = useMemo(() => pickRows(probes, lines), [probes, lines])
-  if (rows.length === 0 && !failed) return null
-  return (
-    <span data-peek-latency="" className="block space-y-1 border-t pt-2">
-      {rows.map((p) => <ProbeRow key={p.id} probe={p} now={now} compact />)}
-      {failed && <span className="block text-xs text-destructive" role="status">延迟刷新失败：{failed}</span>}
-    </span>
+    <Panel data-latency={compact ? undefined : ""} data-peek-latency={compact ? "" : undefined}
+      className={compact ? "block space-y-1 border-t pt-2" : "mt-4 space-y-1.5 border-t pt-4"}>
+      {rows.map((row, index) => <ProbeRow key={row.rule} row={row} now={now} compact={compact} emptyMessage={emptyMessage} failed={index === 0 ? failed : ""} />)}
+      {!rows.length && failed && <span className="block text-xs text-destructive" role="status">延迟刷新失败：{failed}</span>}
+    </Panel>
   )
 }

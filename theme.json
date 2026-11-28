@@ -2,7 +2,7 @@
   "name": "Casurea",
   "short": "casurea",
   "description": "Casurea - Monitor 极简探针的一个二创主题包",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "author": "YannickYoung",
   "url": "https://github.com/YoungYannick/monitor-theme-casurea",
   "config": [
@@ -22,7 +22,7 @@
       "key": "mapFlowCenterId",
       "label": "地图流向中心",
       "default": "",
-      "help": "填节点 ID（如 1），或经度,纬度（如 -118.2437,34.0522），经度 -180～180、纬度 -90～90，留空关闭。坐标为固定汇聚点，连线表示各地点流向中心，地图宽度跟随页面内容宽度"
+      "help": "填节点 ID（如 1），或经度,纬度（如 -118.2437,34.0522），经度 -180～180、纬度 -90～90，留空关闭 坐标为固定汇聚点，连线表示各地点流向中心，地图宽度跟随页面内容宽度"
     },
     {
       "type": "select",
@@ -128,7 +128,7 @@
       "key": "pingLines",
       "label": "显示的延迟线路",
       "default": "",
-      "help": "每行一个 ping 任务名，最多三条；留空自动取前三条"
+      "help": "每行固定一个显示位置 要同时看 CM-V6 和 CM-V4，将它们分写两行；要优先 V6、缺时用 V4，写在同一行：CM-V6 | CM-V4 两种写法可混用，单独指定的任务优先，每台机器的同一任务只显示一次 无记录显示 —，有记录但无响应显示超时 留空自动取前三条；手动填写可超过三行"
     },
     {
       "type": "select",

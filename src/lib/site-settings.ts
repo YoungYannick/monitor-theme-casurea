@@ -26,7 +26,7 @@ export type ThemeConfig = {
    * groupView）；只有概览卡片的两档没有筛选入口，那它一直是全站口径
    */
   listTop: "none" | "groups" | "summary" | "budget" | "both" | "bothBudget"
-  /** 卡片「三网延迟」要显示的线路，按名字指定（ping 任务名），一行一个 */
+  /** 卡片延迟线路，每行一个位置，同一行以 | 分隔备选任务名 */
   pingLines: string
   /** 全站延迟曲线的默认线形；访客可在详情或紧凑展开中临时调整，只影响显示 */
   latencyStyle: LatencyStyle
@@ -160,8 +160,7 @@ export const DEFAULTS: ThemeConfig = {
   // 默认「两个都显示·概览卡片价值版」：分组标签行 + 预算版概览卡片
   // 这两行都是「一眼看全站」的补充，数据取自节点列表本身、不多发请求；没分组时标签行自然不出现
   listTop: "both",
-  // 延迟线路：留空 = 按后台顺序自动显示前几条；填了名字就只显示这些（一行一个）
-  // 名字是 ping 任务的名字，不是节点名——对不上的行会被跳过
+  // 留空自动取前三条；手动指定的行在没有匹配任务时保留位置
   pingLines: "",
   // 四处延迟图默认使用平滑曲线，并保留丢包与缺测断点
   latencyStyle: "smooth",

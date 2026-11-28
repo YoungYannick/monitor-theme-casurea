@@ -5,7 +5,7 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
-import { LatencyPanel, PeekLatency } from "@/components/Latency"
+import { LatencyPanel } from "@/components/Latency"
 import { Meter } from "@/components/Meter"
 import { TextHighlight } from "@/components/TextHighlight"
 import { WideCard } from "@/components/WideCard"
@@ -380,7 +380,7 @@ export function NodeCard({ node, onOpen, onWarm, latencyLines, cardStyle, remark
                   <span className="tnum min-w-0 truncate">{expiryText(node) ?? "无期限"}</span>
                 </span>
                 {/* 三网延迟排在计费那几行下面、自带一条分隔线；只有「经典」档挂它，且要打开浮层才取数 */}
-                {cardStyle === "classic" && <PeekLatency node={node} lines={latencyLines} />}
+                {cardStyle === "classic" && <LatencyPanel node={node} lines={latencyLines} compact />}
               </span>
             )}
           </span>
