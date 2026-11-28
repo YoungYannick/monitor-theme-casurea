@@ -278,6 +278,10 @@ input[type="checkbox"]:focus-visible {
   -webkit-user-select: none;
 }
 .globe-atlas[data-drag="true"] { cursor: grabbing; }
+/* 桌面为页头、概览、筛选行、地图工具栏和一排详细卡合计预留约 650px */
+@media (min-width: 900px) {
+  .globe-atlas { max-height: clamp(160px, calc(100svh - 650px), 280px); }
+}
 /* 未按 Ctrl 滚轮时的操作提示：只盖在地图区上，不吃指针事件，触屏设备不出现 */
 .globe-zoom-hint {
   position: absolute;

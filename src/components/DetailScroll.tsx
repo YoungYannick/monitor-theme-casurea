@@ -11,7 +11,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react"
  *
  * `data-detail-scroll` 是护栏的锚点（判「这一节在滚、不是整块在滚」）
  */
-export function DetailScroll({ children }: { children: ReactNode }) {
+export function DetailScroll({ children, className = "" }: { children: ReactNode; className?: string }) {
   const ref = useRef<HTMLSpanElement | null>(null)
   const [more, setMore] = useState(false)
 
@@ -40,7 +40,7 @@ export function DetailScroll({ children }: { children: ReactNode }) {
       tabIndex={0}
       role="group"
       aria-label="明细"
-      className="detail-scroll block space-y-1 px-2.5 py-1.5 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-foreground"
+      className={`detail-scroll block space-y-1 px-2.5 py-1.5 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-foreground ${className}`}
     >
       {children}
     </span>

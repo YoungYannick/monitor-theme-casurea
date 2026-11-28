@@ -1,5 +1,4 @@
 import { VIEW, wrapLon, type Camera, type GlobeNode, type GlobeView, type Pt } from "./globe.ts"
-import type { FlatCamera, MapBounds } from "./map.ts"
 
 type Point = { x: number; y: number }
 type FlowPoint = Pick<GlobeNode, "key" | "id" | "count" | "offlineCount"> & { px: number; py: number }
@@ -97,87 +96,30 @@ export function globeFlowPaths(flows: PreparedGlobeFlow[], cam: Camera): FlowPat
   })
 }
 
-export function flowMapBounds({ bounds, zoom }: FlatCamera): MapBounds {
-  const scale = Math.min(1, zoom / 100)
-  const w = bounds.w * scale
-  const h = bounds.h * scale
-  return { x: bounds.x + (bounds.w - w) / 2, y: bounds.y + (bounds.h - h) / 2, w, h }
-}
-
-function arc(start: Point, end: Point, scale: number, bounds: MapBounds) {
+function arcControl(start: Point, end: Point) {
   const dx = end.x - start.x
   const dy = end.y - start.y
   const length = Math.hypot(dx, dy)
-  if (length < 2 * scale) return null
-  const control = {
-    x: (start.x + end.x) / 2 + (length - Math.abs(dx)) * 0.18,
-    y: (start.y + end.y) / 2 - length * 0.37,
-  }
-  control.y = Math.max(bounds.y, control.y)
-
-  const at = (t: number): Point => ({
-    x: (1 - t) ** 2 * start.x + 2 * (1 - t) * t * control.x + t ** 2 * end.x,
-    y: (1 - t) ** 2 * start.y + 2 * (1 - t) * t * control.y + t ** 2 * end.y,
-  })
-  const inside = (point: Point) => point.x >= bounds.x - 1e-6 && point.x <= bounds.x + bounds.w + 1e-6 &&
-    point.y >= bounds.y - 1e-6 && point.y <= bounds.y + bounds.h + 1e-6
-  // Exact extrema determine whether the whole curve fits, including any bulge beyond the endpoints.
-  const extrema = [start, end]
-  for (const axis of ["x", "y"] as const) {
-    const denominator = start[axis] - 2 * control[axis] + end[axis]
-    const t = denominator ? (start[axis] - control[axis]) / denominator : -1
-    if (t > 0 && t < 1) extrema.push(at(t))
-  }
-  // Sample partial routes for a viewport-dependent fallback when neither direction fits completely.
-  let visible = 0
-  let pathLength = 0
-  let previous = start
-  for (let i = 0; i <= 32; i++) {
-    const point = at(i / 32)
-    if (inside(point)) visible++
-    pathLength += Math.hypot(point.x - previous.x, point.y - previous.y)
-    previous = point
-  }
-
   return {
-    d: `M ${xy(start)} Q ${xy(control)} ${xy(end)}`,
-    complete: extrema.every(inside),
-    visible: visible / 33,
-    length: pathLength,
+    x: (start.x + end.x) / 2 + (length - Math.abs(dx)) * 0.18,
+    y: Math.max(0, (start.y + end.y) / 2 - length * 0.37),
   }
 }
 
-/** Prefer a complete route in the current viewport. For partial routes, prefer visibility, then distance. */
-export function mapFlowPaths(points: FlowPoint[], center: Pick<FlowPoint, "key" | "px" | "py">, centerOnline: boolean, scale: number, flat: FlatCamera): FlowPath[] {
-  const bounds = flowMapBounds(flat)
-  const worldWidth = flat.bounds.w * flat.zoom / 100
+/** 每个地点只连接一次，直接复用信标和中心在主地图上的坐标 */
+export function mapFlowPaths(points: FlowPoint[], center: Pick<FlowPoint, "key" | "px" | "py">, centerOnline: boolean, scale: number): FlowPath[] {
+  const end = { x: center.px, y: center.py }
   return points.flatMap((point) => {
     if (point.key === center.key) return []
-    if (![point.px, point.py, center.px, center.py, worldWidth, scale].every(Number.isFinite) || worldWidth <= 0) return []
-    const active = centerOnline && point.offlineCount < point.count
-    const delta = point.px - center.px
-    const starts = delta === 0 ? [point.px] : [point.px, point.px - Math.sign(delta) * worldWidth]
-    const candidates = starts.map((x) => {
-      const routes = [0, -1, 1].flatMap((copy) => {
-        const start = { x: x + copy * worldWidth, y: point.py }
-        const end = { x: center.px + copy * worldWidth, y: center.py }
-        const path = arc(start, end, scale, bounds)
-        return path && path.visible > 0 ? [{ ...path, copy }] : []
-      })
-      return {
-        routes,
-        complete: routes.some((path) => path.complete),
-        visible: routes.reduce((sum, path) => sum + path.visible, 0),
-        length: routes[0]?.length ?? Infinity,
-      }
-    })
-    const selected = candidates.reduce((best, candidate) => {
-      if (candidate.complete !== best.complete) return candidate.complete ? candidate : best
-      if (!best.complete && Math.abs(candidate.visible - best.visible) > 1e-6) {
-        return candidate.visible > best.visible ? candidate : best
-      }
-      return candidate.length < best.length ? candidate : best
-    })
-    return selected.routes.map(({ d, copy }) => ({ d, key: `${point.key}:${copy}`, active, delay: -(point.id % 13) * 0.24 }))
+    const start = { x: point.px, y: point.py }
+    const length = Math.hypot(start.x - end.x, start.y - end.y)
+    if (!Number.isFinite(length) || length < 2 * scale) return []
+    const control = arcControl(start, end)
+    return [{
+      key: point.key,
+      d: `M ${xy(start)} Q ${xy(control)} ${xy(end)}`,
+      active: centerOnline && point.offlineCount < point.count,
+      delay: -(point.id % 13) * 0.24,
+    }]
   })
 }

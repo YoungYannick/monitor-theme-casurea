@@ -10,12 +10,12 @@ import type { Node } from "@/lib/api"
 /** 画布与圆盘 上游 SVG 的 `viewBox="0 0 460 240"` 就是这几个数，改它们等于换一套构图 */
 export const VIEW = { w: 460, h: 240, cx: 230, cy: 120, r: 104 } as const
 export type GlobeView = Readonly<{ w: number; h: number; cx: number; cy: number; r: number }>
-export const GLOBE_ZOOM = { min: 50, max: 800, step: 5, default: 100 } as const
+export const GLOBE_ZOOM = { min: 50, max: 800, step: 5, default: 100, baseScale: 1.35 } as const
 
 /** 缩放投影半径；画布高度不跟着半径长，放大到一定程度后圆盘会出画并被容器裁掉 */
 export function zoomView(percent: number, labelCount = 0): GlobeView {
   const zoom = Number.isFinite(percent) ? Math.max(GLOBE_ZOOM.min, Math.min(GLOBE_ZOOM.max, percent)) : GLOBE_ZOOM.default
-  const r = VIEW.r * zoom / 100
+  const r = VIEW.r * GLOBE_ZOOM.baseScale * zoom / 100
   // 左右数量差最多 2；用全部落点预留空间，避免自转过程中可见数量变化导致高度跳动
   const rows = Math.ceil(Math.max(0, Number.isFinite(labelCount) ? labelCount : 0) / 2) + 1
   const gap = rows > 14 ? 11 : 13

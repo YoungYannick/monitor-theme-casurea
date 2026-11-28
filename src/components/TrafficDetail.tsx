@@ -106,7 +106,7 @@ export function TrafficDetail({ nodes }: { nodes: Node[] }) {
       <span data-detail-head="" className="block border-b px-2.5 py-1.5 text-muted-foreground">
         节点明细 · {total} 台
       </span>
-      <DetailScroll>
+      <DetailScroll className="max-h-[min(16rem,45dvh)]">
       {rows.map((node) => {
         const peak = peaks.get(node.id)
         const pending = !peak && !loaded

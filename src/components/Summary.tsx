@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { ArrowDown, ArrowUp } from "lucide-react"
-import { Tooltip } from "radix-ui"
+import { ArrowDown, ArrowUp, Info } from "lucide-react"
+import { Popover, Tooltip } from "radix-ui"
 
 import { Card } from "@/components/ui/card"
 import { DetailScroll } from "@/components/DetailScroll"
@@ -209,9 +209,48 @@ function Tile({ children }: { children: ReactNode }) {
  */
 function Pair({ children }: { children: ReactNode }) {
   return (
-    <Card className="grid min-w-0 grid-cols-1 gap-x-2 gap-y-2 p-4 sm:grid-cols-2 sm:gap-y-0">
+    <Card className="relative grid min-w-0 grid-cols-1 gap-x-2 gap-y-2 p-4 sm:grid-cols-2 sm:gap-y-0">
       {children}
     </Card>
+  )
+}
+
+/** 独立于两块账单读数，允许指针从图标直接移入浮层打开来源链接 */
+function ExchangeRateInfo({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const source = useRef<"hover" | "touch" | "press">("press")
+  useEffect(() => {
+    if (!open || source.current !== "touch") return
+    const close = () => setOpen(false)
+    window.addEventListener("scroll", close, { passive: true })
+    return () => window.removeEventListener("scroll", close)
+  }, [open])
+  return (
+    <div className="absolute top-0.5 right-0.5"
+      onPointerEnter={(e) => {
+        if (e.pointerType === "mouse" && !open) { source.current = "hover"; setOpen(true) }
+      }}
+      onPointerLeave={(e) => {
+        if (e.pointerType === "mouse" && source.current === "hover" && !e.currentTarget.contains(document.activeElement)) setOpen(false)
+      }}>
+      <Popover.Root open={open} onOpenChange={setOpen}>
+        <Popover.Trigger type="button" aria-label="查看预算汇率说明"
+          onPointerDown={(e) => { if (e.pointerType !== "mouse") source.current = "touch" }}
+          onClick={(event) => {
+            if (open && source.current === "hover") event.preventDefault()
+            if (source.current !== "touch" || event.detail === 0) source.current = "press"
+          }}
+          className="flex size-6 cursor-help items-center justify-center rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+          <Info className="size-3.5" aria-hidden="true" />
+        </Popover.Trigger>
+        <Popover.Content side="bottom" align="end" collisionPadding={8} aria-label="预算汇率说明"
+          onOpenAutoFocus={(e) => { if (source.current !== "press") e.preventDefault() }}
+          onCloseAutoFocus={(e) => { if (source.current !== "press") e.preventDefault() }}
+          className="z-50 max-h-[var(--radix-popover-content-available-height)] w-max max-w-[min(19rem,calc(100vw-1rem))] overflow-y-auto rounded-md border bg-popover px-2.5 py-2 text-xs leading-relaxed text-popover-foreground shadow-md">
+          {children}
+        </Popover.Content>
+      </Popover.Root>
+    </div>
   )
 }
 
@@ -374,6 +413,19 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
               <Big>{budget.monthly === null ? "—" : `≈${cny(budget.monthly)}`}</Big>
               <Foot>{budget.monthlyCount ? `${monthlyCoverage} 台计费` : budget.skipped.length ? "缺少汇率" : "未记录价格"}</Foot>
             </Block>
+            {showFx && (
+              <ExchangeRateInfo>
+                <div role="status" aria-label="预算汇率状态" data-exchange-rate-status="" data-fx-origin={fx.origin}
+                  data-fx-failed={fx.failed ? "true" : "false"} data-fx-loading={fx.loading ? "true" : "false"}>
+                  <p>{status}</p>
+                  <p>{note}</p>
+                  {needsFx && <p>{received}，汇率每日更新，仅供参考</p>}
+                  {budget.skipped.length > 0 && <p>{budget.skipped.length} 种币种缺少汇率，未计入</p>}
+                  {custom.invalid > 0 && <p>忽略 {custom.invalid} 项无效自定义汇率</p>}
+                </div>
+                {needsFx && <a href={fx.snapshot.source === "exchangerate-fun" ? "https://www.exchangerate.fun/" : "https://github.com/fawazahmed0/exchange-api"} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">汇率来源</a>}
+              </ExchangeRateInfo>
+            )}
           </Pair>
 
           {/* 第二张卡：节点 + 最忙节点，与上面同一套排法——两块读数分居卡片两端 */}
@@ -423,17 +475,6 @@ export function SummaryCards({ nodes, finance = false, searching = false, exchan
           <Sparkline series={series} />
         </Block>
       </Tile>
-      {showFx && (
-        <div className="col-span-full -mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
-          role="status" aria-label="预算汇率状态" data-exchange-rate-status="" data-fx-origin={fx.origin}
-          data-fx-failed={fx.failed ? "true" : "false"} data-fx-loading={fx.loading ? "true" : "false"}
-          title={`${note} ${needsFx ? `${received}；汇率每日更新，仅供参考 ` : "使用站点设置中的自定义汇率"}`}>
-          <span>{status}</span>
-          {needsFx && <a href={fx.snapshot.source === "exchangerate-fun" ? "https://www.exchangerate.fun/" : "https://github.com/fawazahmed0/exchange-api"} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">汇率来源</a>}
-          {budget.skipped.length > 0 && <span>{budget.skipped.length} 种币种缺少汇率，未计入</span>}
-          {custom.invalid > 0 && <span>忽略 {custom.invalid} 项无效自定义汇率</span>}
-        </div>
-      )}
       </div>
     </Tooltip.Provider>
   )

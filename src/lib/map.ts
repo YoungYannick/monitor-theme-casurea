@@ -1,14 +1,19 @@
-import { GLOBE_ZOOM, type Camera, type GlobeNode, type GlobeView } from "./globe.ts"
+import { GLOBE_ZOOM, wrapLon, type Camera, type GlobeNode, type GlobeView } from "./globe.ts"
 import type { Ring } from "./world.ts"
 
 export const MAP_VIEW = { w: 460, h: 240, viewBox: "0 0 460 240" } as const
 /** Keep Europe and Asia on the left and the Americas on the right. The seam is in the Atlantic. */
 export const MAP_DEFAULT_CENTER = { lon: 150, lat: 0 }
+export const MAP_DEFAULT_ZOOM = 100
 /** 2:1 等距矩形；组件可按实际可用区域传入自适应边框 */
 export const MAP_BOUNDS = { x: 20, y: 10, w: 420, h: 210 } as const
 export type MapBounds = { x: number; y: number; w: number; h: number }
 export type MapPoint = { x: number; y: number; visible: boolean }
-export type FlatCamera = { lon: number; lat: number; zoom: number; bounds: MapBounds; at(lon: number, lat: number): MapPoint | null }
+export type FlatCamera = {
+  lon: number; lat: number; zoom: number; worldWidth: number
+  bounds: MapBounds; clip: MapBounds; overlayBounds: MapBounds
+  at(lon: number, lat: number): MapPoint | null
+}
 export type PreparedMap = { rings: Ring[] }
 export type FlatNode = GlobeNode & { px: number; py: number; visible: boolean }
 type GeoBox = { left: number; right: number; bottom: number; top: number }
@@ -33,23 +38,36 @@ function longitude(value: number): number {
 function project(cam: FlatCamera, lon: number, lat: number): MapPoint {
   const { bounds: b } = cam
   const scale = cam.zoom / 100
-  const x = b.x + b.w / 2 + (lon - cam.lon) / 360 * b.w * scale
+  const x = b.x + b.w / 2 + (lon - cam.lon) / 360 * cam.worldWidth
   const y = b.y + b.h / 2 - (lat - cam.lat) / 180 * b.h * scale
-  return { x, y, visible: x >= b.x - EPS && x <= b.x + b.w + EPS && y >= b.y - EPS && y <= b.y + b.h + EPS }
+  const clip = cam.overlayBounds
+  return { x, y, visible: x >= clip.x - EPS && x <= clip.x + clip.w + EPS && y >= clip.y - EPS && y <= clip.y + clip.h + EPS }
 }
 
 /** 相机只改变投影，viewport 固定；中心经度可绕一周，纬度限制到两极 */
-export function flatCamera(lon = 0, lat = 0, zoom = 100, bounds: MapBounds = MAP_BOUNDS): FlatCamera {
+export function flatCamera(lon = 0, lat = 0, zoom = MAP_DEFAULT_ZOOM, bounds: MapBounds = MAP_BOUNDS, viewport?: Pick<MapBounds, "w" | "h">): FlatCamera {
   const validBounds = [bounds.x, bounds.y, bounds.w, bounds.h, bounds.x + bounds.w, bounds.y + bounds.h].every(Number.isFinite) && bounds.w > 0 && bounds.h > 0
+  const world = validBounds ? bounds : MAP_BOUNDS
+  const percent = Number.isFinite(zoom) ? Math.max(GLOBE_ZOOM.min, Math.min(GLOBE_ZOOM.max, zoom)) : MAP_DEFAULT_ZOOM
+  // 经度水平循环，纬度到两极为止 世界尺寸和可见画布各自保持独立
+  const w = viewport && Number.isFinite(viewport.w) && viewport.w > 0 ? viewport.w : world.w
+  const h = Math.min(viewport?.h ?? world.h, world.h * percent / 100)
+  const worldWidth = world.w * percent / 100
+  const clip = { x: world.x + (world.w - w) / 2, y: world.y + (world.h - h) / 2, w, h }
+  // 底图平铺整个画布，中心一幅世界仅用于判定标记圆心的可见性
+  const overlayWidth = Math.min(w, worldWidth)
   const cam: FlatCamera = {
-    lon: Number.isFinite(lon) ? longitude(lon) : 0,
+    lon: Number.isFinite(lon) ? wrapLon(longitude(lon)) : 0,
     lat: Number.isFinite(lat) ? Math.max(-90, Math.min(90, lat)) : 0,
-    zoom: Number.isFinite(zoom) ? Math.max(GLOBE_ZOOM.min, Math.min(GLOBE_ZOOM.max, zoom)) : GLOBE_ZOOM.default,
-    bounds: validBounds ? { ...bounds } : { ...MAP_BOUNDS },
+    zoom: percent,
+    worldWidth,
+    bounds: { ...world },
+    clip,
+    overlayBounds: { ...clip, x: clip.x + (w - overlayWidth) / 2, w: overlayWidth },
     at(nodeLon, nodeLat) {
       if (!Number.isFinite(nodeLon) || !Number.isFinite(nodeLat) || nodeLat < -90 || nodeLat > 90) return null
       // 先各自归一化，避免有限经度相减先溢出
-      const delta = longitude(longitude(nodeLon) - cam.lon)
+      const delta = wrapLon(longitude(nodeLon) - cam.lon)
       const p = project(cam, cam.lon + delta, nodeLat)
       return Number.isFinite(p.x) && Number.isFinite(p.y) ? p : null
     },
@@ -84,10 +102,11 @@ export function prepareMapRings(rings: Ring[]): PreparedMap {
   return { rings: prepared }
 }
 
-/** 缩小时仍只显示一份世界；放大时只取 viewport 内的经纬范围 */
+/** 水平方向的可见经度可以跨越多个 360° 周期 */
 function geoBox(cam: FlatCamera): GeoBox {
-  const halfLon = 180 / Math.max(1, cam.zoom / 100)
-  const halfLat = 90 / (cam.zoom / 100)
+  const scale = cam.zoom / 100
+  const halfLon = 180 * cam.clip.w / cam.worldWidth
+  const halfLat = 90 * cam.clip.h / (cam.bounds.h * scale)
   return { left: cam.lon - halfLon, right: cam.lon + halfLon, bottom: Math.max(-90, cam.lat - halfLat), top: Math.min(90, cam.lat + halfLat) }
 }
 
@@ -185,12 +204,16 @@ export function mapGraticule(cam: FlatCamera, lonStep = 30, latStep = 30): Array
     wires.push({ d: `M ${coordinate(project(cam, clipped[0][0], clipped[0][1]))} L ${coordinate(project(cam, clipped[1][0], clipped[1][1]))}`, width: equator ? 1 : 0.65, equator })
   }
   for (let lon = -180; lon < 180; lon += longitudeStep) {
-    const shifted = cam.lon + longitude(lon - cam.lon)
-    line([shifted, -90], [shifted, 90])
+    const first = Math.ceil((box.left - lon - EPS) / 360)
+    const last = Math.floor((box.right - lon + EPS) / 360)
+    for (let copy = first; copy <= last; copy++) {
+      const shifted = lon + copy * 360
+      line([shifted, -90], [shifted, 90])
+    }
   }
   const latitudes = new Set([0])
   for (let lat = -90 + latitudeStep; lat < 90; lat += latitudeStep) latitudes.add(lat)
-  for (const lat of latitudes) line([cam.lon - 180, lat], [cam.lon + 180, lat], lat === 0)
+  for (const lat of latitudes) line([box.left, lat], [box.right, lat], lat === 0)
   return wires
 }
 

@@ -7,8 +7,8 @@ import {
   GLOBE_ZOOM, prepareRings, groupedRegionRows, paginateRegionRows, VIEW, wrapLon, zoomView, type GlobeView, type Placed, type Quality,
 } from "@/lib/globe"
 import { COARSE_WORLD_OUTLINES, WORLD_OUTLINES } from "@/lib/world"
-import { MAP_DEFAULT_CENTER, flatCamera, flatNodes, mapHitAreas, mapPaths, mapViewport, prepareMapRings, type FlatNode } from "@/lib/map"
-import { flowMapBounds, globeFlowPaths, globeFlowPoint, globeFlowView, mapFlowPaths, prepareGlobeFlows } from "@/lib/map-flow"
+import { MAP_DEFAULT_CENTER, MAP_DEFAULT_ZOOM, flatCamera, flatNodes, mapHitAreas, mapPaths, mapViewport, prepareMapRings, type FlatNode } from "@/lib/map"
+import { globeFlowPaths, globeFlowPoint, globeFlowView, mapFlowPaths, prepareGlobeFlows } from "@/lib/map-flow"
 import type { Node } from "@/lib/api"
 import type { MapFlowCenter } from "@/lib/site-settings"
 import { Button } from "@/components/ui/button"
@@ -101,7 +101,7 @@ const clampUnit = (value: number) => Math.max(-1, Math.min(1, value))
  * 锚点缩放的正射投影逆解：给定锚点经纬度与缩放后的目标用户坐标，求新相机经纬
  *
  * 只平移视线（无滚转）恰好两个自由度、两个方程；取转动最小的候选解，
- * 避免地球突然翻到另一面。无解时调用方退回居中缩放
+ * 避免地球突然翻到另一面 无解时调用方退回居中缩放
  */
 function anchorCamera(anchor: [number, number], view: { lon: number; lat: number }, nextFrame: GlobeView, to: { x: number; y: number }) {
   const u = (to.x - nextFrame.cx) / nextFrame.r
@@ -247,10 +247,11 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   const [dialogOffset, setDialogOffset] = useState({ x: 0, y: 0 })
   const [dialogDragging, setDialogDragging] = useState(false)
   const [inView, setInView] = useState(true)
-  const [zoom, setZoom] = useState<number>(GLOBE_ZOOM.default)
-  // 完整世界不做纬度平移；放大后限制平移范围，避免拖到两极之外留下空白
-  const flatLatLimit = Math.max(0, 90 - 90 / (zoom / 100))
-  const flatLat = Math.max(-flatLatLimit, Math.min(flatLatLimit, flatView.lat))
+  const [globeZoom, setGlobeZoom] = useState<number>(GLOBE_ZOOM.default)
+  const [mapZoom, setMapZoom] = useState<number>(MAP_DEFAULT_ZOOM)
+  const zoom = mode === "3d" ? globeZoom : mapZoom
+  const setZoom = mode === "3d" ? setGlobeZoom : setMapZoom
+  const defaultZoom = mode === "3d" ? GLOBE_ZOOM.default : MAP_DEFAULT_ZOOM
   // 缩放期间先停自转：锚点缩放要改相机经度，和每帧自转会互相覆盖
   const [zooming, setZooming] = useState(false)
   const [zoomHint, setZoomHint] = useState(false)
@@ -258,8 +259,6 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   useEffect(() => {
     zoomRef.current = zoom
   }, [zoom])
-  const mapClipId = useId()
-  const flowClipId = useId()
   const flowMaskId = useId()
   const beaconGlowId = useId()
   const shadeId = useId()
@@ -272,11 +271,18 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     const base = zoomView(percent, labelCount)
     return globeFlows.length ? globeFlowView(base) : base
   }, [labelCount, globeFlows.length])
-  const globeFrame = useMemo(() => globeFrameFor(zoom), [globeFrameFor, zoom])
+  const globeFrame = useMemo(() => globeFrameFor(globeZoom), [globeFrameFor, globeZoom])
   const frame = mode === "2d"
     ? { w: viewport.w, h: viewport.h, cx: viewport.w / 2, cy: viewport.bounds.y + viewport.bounds.h / 2, r: viewport.bounds.w / 2 }
     : globeFrame
   const mapBounds = viewport.bounds
+  // 放大后的世界超出画布时才允许纬向平移，直到可见边缘抵达极点
+  const flatLatLimitAt = (percent: number) => Math.max(0, 90 * (1 - viewport.h / (mapBounds.h * percent / 100)))
+  const flatLatLimit = flatLatLimitAt(mapZoom)
+  const flatLat = Math.max(-flatLatLimit, Math.min(flatLatLimit, flatView.lat))
+  const flat = flatCamera(flatView.lon, flatLat, mapZoom, mapBounds, viewport)
+  const flatPoints = mode === "2d" ? flatNodes(points, flat) : []
+  const flatPins = flatPoints.filter((p) => p.visible)
   const reduced = useReducedMotion()
   const pageVisible = useSyncExternalStore(subscribeVisibility, () => !document.hidden)
   // 标签左右侧的记忆：跨帧保留，圆心附近 ±18 的机器才不会左右闪布局函数就地写它
@@ -305,8 +311,9 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   } | null>(null)
 
   // 名字、状态与成员始终取当前数据，避免选择列表保存旧节点快照
-  const hoveredPoint = hoveredKey ? pointByKey.get(hoveredKey) : undefined
-  const focusedPoint = focusedKey ? pointByKey.get(focusedKey) : undefined
+  const hasPin = (key: string) => mode === "2d" ? flatPins.some((p) => p.key === key) : pointByKey.has(key)
+  const hovering = hoveredKey !== null && hasPin(hoveredKey)
+  const focusing = focusedKey !== null && hasPin(focusedKey)
   const choicePoint = choiceKey ? pointByKey.get(choiceKey) : undefined
   const choiceMembers = choicePoint?.nodeIds.flatMap((id) => {
     const node = nodeById.get(id)
@@ -314,8 +321,8 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   }) ?? []
   const choosing = choiceMembers.length > 1
   // 成员删除或筛选改变时取消失效交互，之后同一地区重新出现也不会自动重开窗口
-  if (hoveredKey && !hoveredPoint) setHoveredKey(null)
-  if (focusedKey && !focusedPoint) setFocusedKey(null)
+  if (hoveredKey && !hovering) setHoveredKey(null)
+  if (focusedKey && !focusing) setFocusedKey(null)
   if (choiceKey && !choosing) setChoiceKey(null)
 
   useEffect(() => {
@@ -340,7 +347,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
 
   const located = pinned && region !== null
   const rotationOn = rotating && !located
-  const spinning = mode === "3d" && rotating && inView && pageVisible && !dragging && !zooming && !located && !reduced && !hoveredPoint && !focusedPoint && !choosing
+  const spinning = mode === "3d" && rotating && inView && pageVisible && !dragging && !zooming && !located && !reduced && !hovering && !focusing && !choosing
   const flowPlaying = inView && pageVisible && !reduced && !dragging && !choosing
 
   useEffect(() => {
@@ -592,7 +599,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
     if (!box || !points.length) return plain
     const scale = Math.min(box.w / frameValue.w, box.h / frameValue.h)
     // 一侧还剩多少余量（用户单位）：宽屏是"容器比画布宽"留下的空白，窄屏约等于 0
-    // 手机按最终 viewBox 宽度决定高度，左右余量只由 pad 提供，避免高度与 pad 相互反馈
+    // 窄屏只按标签宽度预留两侧空间，避免高度与 pad 相互反馈
     const room = narrow ? 0 : (box.w / scale - frameValue.w) / 2
     // 撑开最多 36：再长宁可截字（见 labelMax），也不能让地球被挤小一圈 ——
     // 460 的画布撑到 532 已经让圆盘小 13%，再多就不是"复刻"那个地球了
@@ -609,17 +616,22 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   const canvas = mode === "2d"
     ? { pad: 0, room: Number.POSITIVE_INFINITY, viewBox: `0 0 ${viewport.w} ${viewport.h}` }
     : globeCanvas
-  // 两种模式共用画布大小；宽屏也为完整的 2:1 世界预留足够高度
+  // 两种模式共用理想画布高度，桌面端的实际高度还受视口上限约束
   const sharedHeight = Math.max(260, (box?.w ?? 0) / 2 + 24)
-  const mobileHeight = box
-    ? Math.max(box.w / 2 + 8, Math.min(250 * globeFrame.h / VIEW.h, box.w * globeFrame.h / (globeFrame.w + globeCanvas.pad * 2)))
-    : 180
-  // 100% 保留获批信标大小，再按缩放倍率同步核心、光晕和命中区域
+  // 手机画布仍按原始 VIEW 半径布局，独立于显示倍率和默认球体大小
+  const mobileHeight = useMemo(() => {
+    if (!narrow || !box) return 180
+    const base = globeFrameFor(100 / GLOBE_ZOOM.baseScale)
+    const { pad } = globeCanvasAt(base)
+    const fittedHeight = box.w * base.h / (base.w + pad * 2)
+    return Math.max(box.w / 2 + 8, Math.min(250 * base.h / VIEW.h, fittedHeight))
+  }, [narrow, box, globeFrameFor, globeCanvasAt])
   const pixelScale = box && box.w > 0 && box.h > 0
     ? Math.max((frame.w + canvas.pad * 2) / box.w, frame.h / box.h)
     : 1
-  // 100% 保留信标大小；上限 1.5 倍，避免大幅放大后信标盖满地图
-  const markerScale = pixelScale * Math.min(1.5, zoom / 100)
+  // 核心、光晕、命中区域随实际投影缩放，最多放大到原始尺寸的 1.5 倍
+  const projectionScale = mode === "3d" ? globeFrame.r / VIEW.r : mapZoom / 100
+  const markerScale = pixelScale * Math.min(1.5, projectionScale)
   /**
    * 标签至画布边缘的距离加上留白，就是这一行最多能有多宽 ——
    * ★ 是 `max(room, pad)`，**不是** `room + pad`（这里踩过一次，`clipped` 那条护栏当时
@@ -638,35 +650,32 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
   // ★ 每一帧在这里算一遍：岸线（几百个点）、经纬网和节点标记
   // 这些函数都是纯的（标签左右侧的记忆那个 Map 由调用方持有），没有副作用
   const cam = camera(view.lon, view.lat, frame)
-  const flat = flatCamera(flatView.lon, flatLat, zoom, mapBounds)
   const land = mode === "3d" ? landPaths(cam, prep) : mapPaths(flat, flatPrep)
   const wires = mode === "3d" ? graticule(cam, profile, null) : []
-  const flatPoints = mode === "2d" ? flatNodes(points, flat) : []
   // ★ 这里读 ref 是有意的，也是这套排布必须的：那两个字是**跨帧记忆**——
   // 圆心附近 ±18 的机器（正在转到中缝上的那几台）如果每帧重新判左右，标签会在两摞之间
   // 来回跳 读它是幂等的：同一帧算多少次结果都一样，只是把"上一帧选的那一侧"记下来
   // eslint-disable-next-line react/refs -- 跨帧记忆，见上
   const placed = mode === "3d" ? layoutLabels(cam, points, sides.current, labelMax, frame.cx, measured)
-    : flatPoints.filter((point) => point.visible)
+    : flatPins
   const globeCenter = mode === "3d" && flowPoint ? globeFlowPoint(cam, flowPoint.ll) : null
   const manualFlatCenter = mode === "2d" && manualCenter ? flat.at(...manualCenter.ll) : null
   const flatFlowCenter = manualCenter && manualFlatCenter
-    ? { key: manualCenter.key, px: manualFlatCenter.x, py: manualFlatCenter.y }
+    ? { key: manualCenter.key, px: manualFlatCenter.x, py: manualFlatCenter.y, visible: manualFlatCenter.visible }
     : flowPoint && flatPoints.find((point) => point.key === flowPoint.key)
   const flowCenter = globeCenter
     ? { px: globeCenter.x, py: globeCenter.y }
-    : flatFlowCenter
+    : flatFlowCenter?.visible ? flatFlowCenter : null
   const flowCenterBack = globeCenter !== null && globeCenter.k <= 0.02
   const flowPaths = mode === "3d" ? globeFlowPaths(globeFlows, cam)
-    : flatFlowCenter ? mapFlowPaths(flatPoints, flatFlowCenter, centerOnline, markerScale, flat) : []
-  const flowBounds = mode === "2d" && flowPaths.length ? flowMapBounds(flat) : null
+    : flatFlowCenter ? mapFlowPaths(flatPoints, flatFlowCenter, centerOnline, markerScale) : []
   // 不同城市的信标仍保留真实位置；重叠点击区按最近中心分开，不再被上层的针盖住
   const hitAreas = mapHitAreas(placed, 9 * markerScale)
   const aim = region ? rows.find((row) => row.region.key === region)?.aim : undefined
   const projectedAim = aim ? (mode === "3d" ? cam.at(aim[0], aim[1]) : flat.at(aim[0], aim[1])) : null
   const marker = projectedAim && (!("visible" in projectedAim) || projectedAim.visible) ? projectedAim : null
   const flatHome = aim ? { lon: wrapLon(aim[0]), lat: 0 } : MAP_DEFAULT_CENTER
-  const zoomResetDisabled = Math.abs(zoom - GLOBE_ZOOM.default) < 0.05 && (mode === "3d" || (flatView.lon === flatHome.lon && flatLat === flatHome.lat))
+  const zoomResetDisabled = Math.abs(zoom - defaultZoom) < 0.05 && (mode === "3d" || (flatView.lon === flatHome.lon && flatLat === flatHome.lat))
 
   /**
    * 带锚点的缩放：给了 `client` 时，鼠标或两指中点下方的地物尽量保持原位
@@ -690,7 +699,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
         const anchorLat = flatLat - (at.y - midY) * 180 / (mapBounds.h * scale0)
         const lon = anchorLon - (at.x - midX) * 360 / (mapBounds.w * scale1)
         const lat = anchorLat + (at.y - midY) * 180 / (mapBounds.h * scale1)
-        const limit = Math.max(0, 90 - 90 / scale1)
+        const limit = flatLatLimitAt(next)
         setFlatView({ lon: wrapLon(lon), lat: Math.max(-limit, Math.min(limit, lat)) })
       } else {
         const from = screenToUser(client.x, client.y, rect, paintTransform(rect, canvas.pad, frame.w, frame.h))
@@ -782,7 +791,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
           onLostPointerCapture={(e) => { releasePointer(e); endDrag(e, false) }}
         >
           {/* 装饰层单独隐藏，信标提供有名称的键盘入口与多节点选择 */}
-          <svg data-map-canvas data-camera-longitude={mode === "2d" ? flatView.lon : view.lon} data-camera-latitude={mode === "2d" ? flatLat : view.lat} data-camera-cx={frame.cx} data-camera-cy={frame.cy} data-camera-r={frame.r} viewBox={canvas.viewBox} preserveAspectRatio="xMidYMid meet" role="group" aria-label="地图节点" focusable="false">
+          <svg data-map-canvas data-camera-longitude={mode === "2d" ? flat.lon : view.lon} data-camera-latitude={mode === "2d" ? flatLat : view.lat} data-camera-cx={frame.cx} data-camera-cy={frame.cy} data-camera-r={frame.r} viewBox={canvas.viewBox} preserveAspectRatio="xMidYMid meet" role="group" aria-label="地图节点" focusable="false">
             <defs>
               {/* 中央保留与 2D 相同的底色，只在球缘叠加柔和暗影 */}
               <radialGradient id={shadeId} cx="38%" cy="36%" r="68%">
@@ -790,12 +799,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
                 <stop offset="70%" stopColor="var(--globe-rim)" stopOpacity="0" />
                 <stop offset="100%" stopColor="var(--globe-rim)" stopOpacity="1" />
               </radialGradient>
-              <clipPath id={mapClipId}>
-                <rect data-map-bounds x={mapBounds.x} y={mapBounds.y} width={mapBounds.w} height={mapBounds.h} />
-              </clipPath>
-              {flowBounds && <clipPath id={flowClipId}>
-                <rect x={flowBounds.x} y={flowBounds.y} width={flowBounds.w} height={flowBounds.h} />
-              </clipPath>}
+              <rect data-map-bounds x={flat.overlayBounds.x} y={flat.overlayBounds.y} width={flat.overlayBounds.w} height={flat.overlayBounds.h} />
               {(["online", "offline"] as const).map((state) => (
                 <radialGradient key={state} id={`${beaconGlowId}-${state}`}>
                   <stop offset="0%" stopColor={`var(--globe-pin-${state})`} stopOpacity="0.55" />
@@ -822,7 +826,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
             {mode === "3d" && <circle className="globe-disk" style={{ fill: `url(#${shadeId})` }} cx={frame.cx} cy={frame.cy} r={frame.r} />}
             </g>
             {flowPaths.length > 0 && (
-              <g aria-hidden="true" clipPath={flowBounds ? `url(#${flowClipId})` : undefined}>
+              <g aria-hidden="true">
                 {flowPaths.map((path, index) => (
                   <g key={path.key} className="globe-flow-route" data-map-flow-route={path.key} data-active={path.active}>
                     {path.front !== undefined && <defs>
@@ -840,15 +844,16 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
                 ))}
               </g>
             )}
-            <g clipPath={mode === "2d" ? `url(#${mapClipId})` : undefined}>
+            {/* 2D 标记按圆心选择唯一位置；圆环、光晕和点击区可跨过内部接缝 */}
+            <g>
               {flowCenter && (
                 <circle className="globe-flow-center" data-map-flow-center data-back={flowCenterBack} cx={flowCenter.px} cy={flowCenter.py} r={8.7 * markerScale} aria-hidden="true" />
               )}
               {marker && (
-              <g className="globe-selected" aria-hidden="true">
-                <circle className="globe-selected-ring" cx={marker.x} cy={marker.y} r={7} />
-                <circle className="globe-selected-core" cx={marker.x} cy={marker.y} r={2.4} />
-              </g>
+                <g className="globe-selected" aria-hidden="true">
+                  <circle className="globe-selected-ring" cx={marker.x} cy={marker.y} r={7} />
+                  <circle className="globe-selected-core" cx={marker.x} cy={marker.y} r={2.4} />
+                </g>
               )}
               {placed.map((p, index) => (
                 <Pin
@@ -889,7 +894,7 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
               <Plus />
             </Button>
             <output className="tnum" aria-label={`当前缩放 ${Math.round(zoom)}%`}>{Math.round(zoom)}%</output>
-            <Button variant="ghost" size="sm" className="globe-zoom-reset" aria-label="重置地球缩放" title="恢复默认缩放比例" disabled={zoomResetDisabled} onClick={() => { setZoom(GLOBE_ZOOM.default); if (mode === "2d") setFlatView(flatHome) }}>重置</Button>
+            <Button variant="ghost" size="sm" className="globe-zoom-reset" aria-label="重置地球缩放" title="恢复默认缩放比例" disabled={zoomResetDisabled} onClick={() => { setZoom(defaultZoom); if (mode === "2d") setFlatView(flatHome) }}>重置</Button>
           </div>
         </div>
       </div>
@@ -1013,9 +1018,9 @@ export function Globe({ nodes, flowCenter: flowTarget, region, regionGroup, onRe
 }
 
 /**
- * 100% 时的柔光信标：核心 6.4px、外圈 11.52px（含描边）、光晕 15.04px，随缩放同步变化
+ * 柔光信标的原始尺寸：核心 6.4px、外圈 11.52px（含描边）、光晕 15.04px，随投影缩放
  * 在线绿芯绿圈，离线红芯红圈带短横，部分离线绿芯红圈；核心常亮且不描黑边
- * 3D 每个地点一条引线及标签，2D 仅画标记；每个地点只有一个命中区域
+ * 3D 每个地点带引线及标签，2D 每个地点只有一个标记和命中区域
  */
 function Pin({ p, hitArea, members, markerScale, glowId, active, tabIndex, tooltipOpen, choiceId, choosing, onHover, onFocus, onActivate, onWarm }: {
   p: Placed | FlatNode
